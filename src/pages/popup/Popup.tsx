@@ -1,11 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { getTodayStats, formatTime, formatTimeDetailed } from '../../utils/analytics';
+import { Login } from '@src/components/login';
 
 interface Stats {
   totalTime: number;
+  foregroundTime: number;
+  backgroundTime: number;
   activeTime: number;
   idleTime: number;
-  topDomains: Array<{ domain: string; time: number; percentage: number }>;
+  topDomains: Array<{ 
+    domain: string; 
+    time: number; 
+    foregroundTime: number;
+    backgroundTime: number;
+    percentage: number;
+    foregroundPercentage: number;
+  }>;
   domainCount: number;
   visitCount: number;
 }
@@ -69,14 +79,23 @@ export default function Popup() {
         </p>
       </div>
 
+      {/* <Login /> */}
+
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Total Time Card */}
         <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-4 shadow-lg">
           <div className="text-sm text-blue-200 mb-1">Today's Total Time</div>
           <div className="text-3xl font-bold">{formatTime(stats.totalTime)}</div>
-          <div className="text-xs text-blue-200 mt-2">
-            Active: {formatTime(stats.activeTime)} • Idle: {formatTime(stats.idleTime)}
+          <div className="text-xs text-blue-200 mt-2 space-y-1">
+            <div className="flex justify-between">
+              <span>Foreground:</span>
+              <span className="font-medium">{formatTime(stats.foregroundTime)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Background:</span>
+              <span className="font-medium">{formatTime(stats.backgroundTime)}</span>
+            </div>
           </div>
         </div>
 
@@ -108,16 +127,29 @@ export default function Popup() {
                         {domain.domain}
                       </span>
                     </div>
-                    <span className="text-xs font-medium text-blue-400 ml-2">
-                      {formatTime(domain.time)}
-                    </span>
+                    <div className="flex flex-col items-end ml-2">
+                      <span className="text-xs font-medium text-blue-400">
+                        {formatTime(domain.time)}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {formatTime(domain.foregroundTime)}f / {formatTime(domain.backgroundTime)}b
+                      </span>
+                    </div>
                   </div>
                   <div className="ml-6">
                     <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.min(domain.percentage, 100)}%` }}
-                      />
+                      <div className="h-full flex">
+                        <div
+                          className="bg-blue-500 rounded-l-full transition-all duration-300"
+                          style={{ width: `${(domain.foregroundTime / domain.time) * domain.percentage}%` }}
+                          title={`Foreground: ${domain.foregroundPercentage.toFixed(1)}%`}
+                        />
+                        <div
+                          className="bg-purple-500 rounded-r-full transition-all duration-300"
+                          style={{ width: `${(domain.backgroundTime / domain.time) * domain.percentage}%` }}
+                          title={`Background: ${(100 - domain.foregroundPercentage).toFixed(1)}%`}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

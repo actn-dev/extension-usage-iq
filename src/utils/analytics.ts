@@ -8,9 +8,18 @@ import { getTodayActivity, getDailySummaries } from './storage';
  */
 export async function getTodayStats(): Promise<{
   totalTime: number;
+  foregroundTime: number;
+  backgroundTime: number;
   activeTime: number;
   idleTime: number;
-  topDomains: Array<{ domain: string; time: number; percentage: number }>;
+  topDomains: Array<{ 
+    domain: string; 
+    time: number; 
+    foregroundTime: number;
+    backgroundTime: number;
+    percentage: number;
+    foregroundPercentage: number;
+  }>;
   domainCount: number;
   visitCount: number;
 }> {
@@ -19,17 +28,26 @@ export async function getTodayStats(): Promise<{
   const domainArray: DomainActivity[] = Object.values(today.domains);
   const totalVisits = domainArray.reduce((sum, d) => sum + d.visitCount, 0);
   
+  // Calculate total foreground and background time
+  const totalForeground = domainArray.reduce((sum, d) => sum + d.foregroundTime, 0);
+  const totalBackground = domainArray.reduce((sum, d) => sum + d.backgroundTime, 0);
+  
   const topDomains = domainArray
     .sort((a, b) => b.totalTime - a.totalTime)
     .slice(0, 10)
     .map(d => ({
       domain: d.domain,
       time: d.totalTime,
+      foregroundTime: d.foregroundTime,
+      backgroundTime: d.backgroundTime,
       percentage: today.totalTime > 0 ? (d.totalTime / today.totalTime) * 100 : 0,
+      foregroundPercentage: d.totalTime > 0 ? (d.foregroundTime / d.totalTime) * 100 : 0,
     }));
   
   return {
     totalTime: today.totalTime,
+    foregroundTime: totalForeground,
+    backgroundTime: totalBackground,
     activeTime: today.totalTime - today.idleTime,
     idleTime: today.idleTime,
     topDomains,

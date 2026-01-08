@@ -3,6 +3,7 @@ import '@pages/options/Options.css';
 import { getTodayStats, getWeeklyStats, formatTime, formatTimeDetailed, calculateProductivityScore } from '../../utils/analytics';
 import { getDailySummaries, getStorageInfo, getTodayActivity } from '../../utils/storage';
 import type { DailySummary } from '../../types';
+import { Login } from '@src/components/login';
 
 interface Tab {
   id: string;
@@ -93,6 +94,7 @@ export default function Options() {
         </div>
       </header>
 
+      {/* <Login /> */}
       {/* Tabs */}
       <div className="bg-slate-800/30 border-b border-slate-700">
         <div className="max-w-7xl mx-auto px-6">
@@ -149,23 +151,25 @@ function TodayTab({ stats }: { stats: any }) {
         </div>
 
         <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-lg p-6 shadow-xl">
-          <div className="text-sm text-green-200 mb-2">Active Time</div>
-          <div className="text-3xl font-bold">{formatTime(stats.activeTime)}</div>
+          <div className="text-sm text-green-200 mb-2">Foreground Time</div>
+          <div className="text-3xl font-bold">{formatTime(stats.foregroundTime)}</div>
           <div className="text-xs text-green-200 mt-2">
-            {stats.totalTime > 0 ? Math.round((stats.activeTime / stats.totalTime) * 100) : 0}% active
+            {stats.totalTime > 0 ? Math.round((stats.foregroundTime / stats.totalTime) * 100) : 0}% active viewing
           </div>
         </div>
 
         <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-6 shadow-xl">
-          <div className="text-sm text-purple-200 mb-2">Sites Visited</div>
-          <div className="text-3xl font-bold">{stats.domainCount}</div>
-          <div className="text-xs text-purple-200 mt-2">{stats.visitCount} total visits</div>
+          <div className="text-sm text-purple-200 mb-2">Background Time</div>
+          <div className="text-3xl font-bold">{formatTime(stats.backgroundTime)}</div>
+          <div className="text-xs text-purple-200 mt-2">
+            {stats.totalTime > 0 ? Math.round((stats.backgroundTime / stats.totalTime) * 100) : 0}% in background
+          </div>
         </div>
 
         <div className="bg-gradient-to-br from-orange-600 to-orange-700 rounded-lg p-6 shadow-xl">
-          <div className="text-sm text-orange-200 mb-2">Productivity Score</div>
-          <div className="text-3xl font-bold">{productivityScore}</div>
-          <div className="text-xs text-orange-200 mt-2">out of 100</div>
+          <div className="text-sm text-orange-200 mb-2">Sites Visited</div>
+          <div className="text-3xl font-bold">{stats.domainCount}</div>
+          <div className="text-xs text-orange-200 mt-2">{stats.visitCount} total visits</div>
         </div>
       </div>
 
@@ -180,15 +184,16 @@ function TodayTab({ stats }: { stats: any }) {
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">#</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Domain</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time Spent</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Percentage</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Total Time</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Foreground</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Background</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Distribution</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
               {stats.topDomains.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
                     No browsing activity recorded yet
                   </td>
                 </tr>
@@ -198,12 +203,19 @@ function TodayTab({ stats }: { stats: any }) {
                     <td className="px-6 py-4 text-gray-400">{index + 1}</td>
                     <td className="px-6 py-4 font-medium">{domain.domain}</td>
                     <td className="px-6 py-4">{formatTime(domain.time)}</td>
-                    <td className="px-6 py-4 text-blue-400">{domain.percentage.toFixed(1)}%</td>
+                    <td className="px-6 py-4 text-green-400">{formatTime(domain.foregroundTime)}</td>
+                    <td className="px-6 py-4 text-purple-400">{formatTime(domain.backgroundTime)}</td>
                     <td className="px-6 py-4">
-                      <div className="w-full bg-slate-700 rounded-full h-2">
+                      <div className="w-full bg-slate-700 rounded-full h-2 flex overflow-hidden">
                         <div
-                          className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full"
-                          style={{ width: `${Math.min(domain.percentage, 100)}%` }}
+                          className="bg-green-500 h-2"
+                          style={{ width: `${domain.foregroundPercentage}%` }}
+                          title={`Foreground: ${domain.foregroundPercentage.toFixed(1)}%`}
+                        />
+                        <div
+                          className="bg-purple-500 h-2"
+                          style={{ width: `${100 - domain.foregroundPercentage}%` }}
+                          title={`Background: ${(100 - domain.foregroundPercentage).toFixed(1)}%`}
                         />
                       </div>
                     </td>

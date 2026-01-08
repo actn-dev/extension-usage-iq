@@ -2,6 +2,7 @@
 
 import { getSessionState, updateSessionState, updateDomainActivity, addIdleTime } from './storage';
 import { extractDomain, shouldTrackUrl } from '../types';
+import { getAllOpenDomains, getTabDomain } from './tabTracker';
 
 let trackingInterval: number | null = null;
 let lastUpdateTime: number = Date.now();
@@ -113,13 +114,13 @@ export async function resumeTracking(reason: 'active' | 'windowFocus'): Promise<
 }
 
 /**
- * Accumulate time for the currently active domain
+ * Accumulate time for the currently active domain and all background domains
  */
 async function accumulateTime(): Promise<void> {
   const state = await getSessionState();
   
-  // Don't accumulate if no active domain or if idle or window not focused
-  if (!state.activeDomain || state.isIdle || !state.windowFocused) {
+  // Don't accumulate if idle or window not focused
+  if (state.isIdle || !state.windowFocused) {
     return;
   }
   
@@ -127,7 +128,28 @@ async function accumulateTime(): Promise<void> {
   const elapsed = Math.floor((now - lastUpdateTime) / 1000); // Convert to seconds
   
   if (elapsed > 0) {
-    await updateDomainActivity(state.activeDomain, elapsed);
+    // Get the active domain
+    const activeDomain = state.activeDomain;
+    
+    // Get all open domains
+    const allOpenDomains = getAllOpenDomains();
+    
+    // Update all domains
+    const updates: Promise<void>[] = [];
+    
+    allOpenDomains.forEach(domain => {
+      if (domain === activeDomain) {
+        // Active tab: update foreground time
+        updates.push(updateDomainActivity(domain, elapsed, true));
+      } else {
+        // Background tab: update background time
+        updates.push(updateDomainActivity(domain, elapsed, false));
+      }
+    });
+    
+    // Execute all updates in parallel for efficiency
+    await Promise.all(updates);
+    
     lastUpdateTime = now;
   }
 }

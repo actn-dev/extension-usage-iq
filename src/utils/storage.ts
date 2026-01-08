@@ -73,7 +73,8 @@ export async function getTodayActivity(): Promise<{
  */
 export async function updateDomainActivity(
   domain: string,
-  timeToAdd: number
+  timeToAdd: number,
+  isForeground: boolean = true
 ): Promise<void> {
   const today = await getTodayActivity();
   const currentDate = getCurrentDateString();
@@ -81,19 +82,29 @@ export async function updateDomainActivity(
   // Check if day changed - if so, roll over to new day
   if (today.date !== currentDate) {
     await rolloverToNewDay();
-    return updateDomainActivity(domain, timeToAdd);
+    return updateDomainActivity(domain, timeToAdd, isForeground);
   }
   
   if (!today.domains[domain]) {
     today.domains[domain] = {
       domain,
       totalTime: 0,
+      foregroundTime: 0,
+      backgroundTime: 0,
       visitCount: 1,
       lastVisit: new Date().toISOString(),
       date: currentDate,
     };
   }
   
+  // Update the appropriate time counter
+  if (isForeground) {
+    today.domains[domain].foregroundTime += timeToAdd;
+  } else {
+    today.domains[domain].backgroundTime += timeToAdd;
+  }
+  
+  // Update total time and last visit
   today.domains[domain].totalTime += timeToAdd;
   today.domains[domain].lastVisit = new Date().toISOString();
   today.totalTime += timeToAdd;
@@ -117,6 +128,8 @@ export async function incrementVisitCount(domain: string): Promise<void> {
     today.domains[domain] = {
       domain,
       totalTime: 0,
+      foregroundTime: 0,
+      backgroundTime: 0,
       visitCount: 0,
       lastVisit: new Date().toISOString(),
       date: currentDate,

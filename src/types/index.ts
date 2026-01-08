@@ -5,7 +5,9 @@
  */
 export interface DomainActivity {
   domain: string;
-  totalTime: number; // Total time in seconds
+  totalTime: number; // Total time in seconds (foreground + background)
+  foregroundTime: number; // Time when tab was active/focused (seconds)
+  backgroundTime: number; // Time when tab was open but not active (seconds)
   visitCount: number;
   lastVisit: string; // ISO 8601 timestamp
   date: string; // YYYY-MM-DD format
