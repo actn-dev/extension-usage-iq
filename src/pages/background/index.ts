@@ -5,16 +5,29 @@ import { initializeStorage, getSessionState, updateSessionState, incrementVisitC
 import { startTracking, stopTracking, pauseTracking, resumeTracking, handleIdleStateChange } from '../../utils/timeTracker';
 import { extractDomain, shouldTrackUrl, getCurrentDateString } from '../../types';
 import { initializeTabTracker, addTab, removeTab, updateTab } from '../../utils/tabTracker';
+import { initializeBlocking, updateBlockingRules } from '../../utils/blockManager';
+import { getDomainMinutesUsedToday, getBlockConfig } from '../../utils/blockStorage';
+import { getSyncManager } from '../../utils/syncManager';
+import { getAuthManager } from '../../utils/authManager';
 
 console.log('UsageIQ background service worker loaded');
 
 // Initialize extension
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('Extension installed/updated:', details.reason);
+
+  // Initialize storage
   await initializeStorage();
   
   // Initialize tab tracker with all open tabs
   await initializeTabTracker();
+  
+  // Initialize blocking system
+  await initializeBlocking();
+  
+  // Initialize sync manager
+  const syncManager = getSyncManager();
+  await syncManager.initialize();
   
   // Set up idle detection (5 minutes = 300 seconds)
   chrome.idle.setDetectionInterval(300);
@@ -23,6 +36,16 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   chrome.alarms.create('dailyRollover', {
     when: getNextMidnight(),
     periodInMinutes: 24 * 60, // Once per day
+  });
+  
+  // Set up periodic check for time limits and schedules (every minute)
+  chrome.alarms.create('checkTimeLimits', {
+    periodInMinutes: 1,
+  });
+  
+  // Set up frequent schedule checks (every 5 minutes)
+  chrome.alarms.create('checkSchedules', {
+    periodInMinutes: 5,
   });
   
   console.log('UsageIQ initialized successfully');
@@ -134,16 +157,23 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
 // Idle state changed
 chrome.idle.onStateChanged.addListener(async (newState) => {
   console.log('Idle state changed:', newState);
+  // @ts-expect-error TS doesn't recognize async listener
   await handleIdleStateChange(newState);
 });
 
-// Handle alarms (daily rollover, etc.)
+// Handle alarms (daily rollover, time limit checks, etc.)
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   console.log('Alarm triggered:', alarm.name);
   
   if (alarm.name === 'dailyRollover') {
     console.log('Performing daily rollover');
     await rolloverToNewDay();
+  } else if (alarm.name === 'checkTimeLimits') {
+    // Check if any domains have exceeded time limits
+    await checkAndUpdateTimeLimits();
+  } else if (alarm.name === 'checkSchedules') {
+    // Check if schedule-based blocks need to be updated
+    await checkAndUpdateSchedules();
   }
 });
 
@@ -164,3 +194,97 @@ self.addEventListener('beforeunload', async () => {
   console.log('Service worker shutting down, saving state');
   await stopTracking();
 });
+
+// Listen for messages from popup/options
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'AUTH_STATE_CHANGED') {
+    handleAuthStateChange(message.authenticated).then(() => {
+      sendResponse({ success: true });
+    });
+    return true; // Keep channel open for async response
+  }
+  
+  if (message.type === 'MANUAL_SYNC') {
+    handleManualSync().then((result) => {
+      sendResponse(result);
+    });
+    return true;
+  }
+  
+  if (message.type === 'GET_SYNC_STATUS') {
+    getSyncStatus().then((status) => {
+      sendResponse(status);
+    });
+    return true;
+  }
+});
+
+// Handle auth state changes
+async function handleAuthStateChange(authenticated: boolean): Promise<void> {
+  const syncManager = getSyncManager();
+  
+  if (authenticated) {
+    console.log('User logged in, starting auto-sync');
+    await syncManager.startAutoSync();
+    // Perform immediate sync
+    await syncManager.syncNow();
+  } else {
+    console.log('User logged out, stopping auto-sync');
+    await syncManager.stopAutoSync();
+  }
+}
+
+// Handle manual sync request
+async function handleManualSync() {
+  const syncManager = getSyncManager();
+  return await syncManager.syncNow();
+}
+
+// Get sync status
+async function getSyncStatus() {
+  const syncManager = getSyncManager();
+  return await syncManager.getSyncStatus();
+}
+
+// Check time limits and update blocking rules
+async function checkAndUpdateTimeLimits(): Promise<void> {
+  try {
+    const config = await getBlockConfig();
+    if (!config.enabled) return;
+    
+    let needsUpdate = false;
+    
+    // Check each domain with time limit
+    for (const domain of Object.keys(config.timeLimits)) {
+      const usedMinutes = await getDomainMinutesUsedToday(domain);
+      const limitMinutes = config.timeLimits[domain];
+      
+      // If just exceeded limit, update rules
+      if (usedMinutes >= limitMinutes) {
+        needsUpdate = true;
+        console.log(`Domain ${domain} exceeded time limit: ${usedMinutes}/${limitMinutes} minutes`);
+      }
+    }
+    
+    if (needsUpdate) {
+      await updateBlockingRules();
+    }
+  } catch (error) {
+    console.error('Error checking time limits:', error);
+  }
+}
+
+// Check schedules and update blocking rules
+async function checkAndUpdateSchedules(): Promise<void> {
+  try {
+    const config = await getBlockConfig();
+    if (!config.enabled || config.schedules.length === 0) return;
+    
+    // Always update rules to ensure schedules are current
+    // (schedules might have started or ended since last check)
+    await updateBlockingRules();
+    console.log('Updated blocking rules based on active schedules');
+  } catch (error) {
+    console.error('Error checking schedules:', error);
+  }
+}

@@ -7,6 +7,10 @@ A Chrome extension that tracks and analyzes browsing activity with detailed time
 ✅ **Real-time Activity Tracking**
 - Monitors active tabs and time spent on each website
 - Tracks domain-level activity (groups all pages from the same site)
+- **Foreground vs Background time tracking**:
+  - Foreground time: When tab is actively viewed/focused
+  - Background time: When tab is open but not active
+  - Efficient single-timer approach with in-memory tab tracking
 - Detects idle time (5-minute threshold)
 - Handles multi-window and focus changes
 
@@ -15,15 +19,17 @@ A Chrome extension that tracks and analyzes browsing activity with detailed time
 - Automatic daily rollover at midnight
 - 30-day historical data retention
 - Data export to JSON
+- Efficient event-driven tab tracking (no polling)
 
 ✅ **User Interface**
 - **Popup Dashboard**: Quick view of today's activity
-  - Total time, active/idle breakdown
-  - Top 10 websites with visual progress bars
+  - Total time with foreground/background breakdown
+  - Top 10 websites with dual-color progress bars
+  - Visual distinction: Blue (foreground) vs Purple (background)
   - Live updates every 2 seconds
   
 - **Options Page**: Detailed analytics
-  - Today tab: Comprehensive daily stats with productivity score
+  - Today tab: Comprehensive daily stats with foreground/background metrics
   - Week tab: 7-day trends and aggregated data
   - History tab: Full historical data table
   - Settings tab: Storage info and data export
@@ -31,9 +37,15 @@ A Chrome extension that tracks and analyzes browsing activity with detailed time
 ✅ **Analytics**
 - Time formatting (hours, minutes, seconds)
 - Top domains ranked by time spent
-- Percentage distribution
-- Productivity scoring algorithm
+- Foreground/background time distribution
+- Percentage calculations for both time types
 - Weekly averages and trends
+
+✅ **Authentication & User Management**
+- Better Auth integration
+- Google OAuth social login
+- Session management with React hooks
+- Secure user authentication flow
 
 ## Project Structure
 
@@ -43,18 +55,26 @@ src/
 │   └── index.ts                 # TypeScript interfaces and data models
 ├── utils/
 │   ├── storage.ts              # Chrome storage manager
-│   ├── timeTracker.ts          # Time tracking engine
+│   ├── timeTracker.ts          # Time tracking engine (foreground/background)
+│   ├── tabTracker.ts           # In-memory tab tracking
 │   └── analytics.ts            # Data aggregation and formatting
+├── lib/
+│   └── auth/
+│       └── auth-client.ts      # Better Auth client configuration
+├── components/
+│   └── login.tsx               # Login/authentication component
 ├── pages/
 │   ├── background/
 │   │   └── index.ts            # Service worker (main monitoring engine)
 │   ├── popup/
 │   │   ├── index.html
 │   │   ├── index.tsx
+│   │   ├── index.css
 │   │   └── Popup.tsx           # Popup dashboard UI
 │   └── options/
 │       ├── index.html
 │       ├── index.tsx
+│       ├── index.css
 │       └── Options.tsx         # Detailed analytics page
 └── manifest.json               # Extension configuration
 ```
@@ -69,19 +89,30 @@ The core monitoring engine runs as a Manifest V3 service worker:
   - `chrome.tabs.onUpdated`: URL changes
   - `chrome.tabs.onRemoved`: Tab closures
   - `chrome.windows.onFocusChanged`: Window focus
-  - `chrome.idle.onStateChanged`: Idle detection
+  - Single 1-second interval for all tracking (minimal CPU)
+  - Foreground: Active tab gets foreground time
+  - Background: All other open tabs get background time
+  - In-memory Map tracks all open tabs efficiently
+  - Pauses when idle or window loses focus
+  - Persists state across browser restarts
 
-- **Time Tracking**:
+- **Tab Tracking**:
+  - Event-driven in-memory Map (no polling)
+  - Initializes on extension startup/install
+  - Updates via tab events only
+  - Efficient domain grouping
   - Updates every second for active tab
   - Pauses when idle or window loses focus
   - Persists state across browser restarts
 
 - **Data Management**:
   - Stores activity in chrome.storage.local
-  - Runs daily rollover at midnight via chrome.alarms
-  - Cleans up data older than 30 days
-
-### Data Models
+  - Runs daily rollover a   // seconds (foreground + background)
+  foregroundTime: number;   // seconds when tab was active/focused
+  backgroundTime: number;   // seconds when tab was open but not active
+  visitCount: number;
+  lastVisit: string;        // ISO timestamp
+  date: string;   
 
 **DomainActivity**:
 ```typescript
@@ -213,28 +244,41 @@ Required Chrome permissions:
 - **Excludes**: `chrome://`, `chrome-extension://`, `about:` pages
 - **Incognito mode**: Not monitored (Chrome restriction)
 
-## Performance
-
-- **Memory usage**: <20 MB
-- **CPU usage**: <1% (steady state)
+## Performance (including in-memory tab tracker)
+- **CPU usage**: <1% (steady state, even with 50+ tabs)
 - **Storage**: ~100-500 KB for 30 days of data
+- **Update frequency**: 1-second intervals for all tracking
+- **Background tracking overhead**: Minimal (pure memory operations)
+- **UI refresh**: 2-5 seconds for dashboard updates
+- **Tab tracking**: Event-driven (no polling overhead)
 - **Update frequency**: 1-second intervals for active tracking
 - **UI refresh**: 2-5 seconds for dashboard updates
 
 ## Known Limitations
 
 1. Cannot track incognito mode (Chrome restriction)
-2. Service worker may sleep after inactivity (resumed on next event)
-3. URL query parameters and fragments are preserved (consider privacy)
-4. 5 MB storage quota (Chrome limit for local storage)
+## Recent Updates
+
+### Version 1.1.0 (January 9, 2026)
+- ✅ Added foreground vs background time tracking
+- ✅ Implemented efficient in-memory tab tracker
+- ✅ Updated UI to show dual time metrics
+- ✅ Enhanced analytics with foreground/background distribution
+- ✅ Optimized for minimal CPU usage with multiple tabs
+- ✅ Integrated Better Auth for user authentication
+- ✅ Implemented Google OAuth social login
+- ✅ Added session management with React hooks
 
 ## Future Enhancements
 
+- [ ] Cloud sync with authenticated backend
 - [ ] Domain exclusion list (configurable)
 - [ ] Custom idle threshold
 - [ ] Working hours filter
 - [ ] Server sync for organization-wide analytics
 - [ ] Advanced productivity algorithms
+- [ ] Category-based site classification
+- [ ] Multi-device data synchronization
 - [ ] Chrome Web Store publication
 - [ ] Firefox support
 
@@ -255,8 +299,27 @@ Required Chrome permissions:
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file
+MIT License - S1.0  
+**Last Updated**: January 9, 2026
 
+## Changelog
+
+### v1.1.0 - January 9, 2026
+- Added foreground/background time tracking
+- Implemented in-memory tab tracker for efficiency
+- Updated popup and options UI with dual-time metrics
+- Enhanced analytics with foreground percentage calculations
+- Optimized CPU usage for multi-tab scenarios
+- Integrated Better Auth for authentication
+- Implemented Google OAuth social login
+- Added Login component with session management
+
+### v1.0.0 - January 8, 2026
+- Initial release
+- Basic time tracking for active tabs
+- Popup dashboard and options page
+- Daily rollover and data retention
+- Idle detection and window focus handling
 ## Credits
 
 Built with:

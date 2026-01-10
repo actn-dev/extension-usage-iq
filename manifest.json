@@ -28,7 +28,9 @@
     "tabs",
     "storage",
     "idle",
-    "alarms"
+    "alarms",
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -124,3 +124,84 @@ export function shouldTrackUrl(url: string): boolean {
   
   return true;
 }
+
+/**
+ * Block configuration for website limiting and blocking
+ */
+export interface BlockConfig {
+  enabled: boolean;
+  blockedDomains: string[];
+  timeLimits: Record<string, number>; // domain -> minutes per day
+  schedules: BlockSchedule[];
+  softBlock: boolean; // Show warning instead of hard block
+  overrideEnabled: boolean; // Allow user to bypass block temporarily
+  overrideMaxDuration: number; // How long override lasts (minutes)
+}
+
+/**
+ * Block schedule for time-based blocking
+ */
+export interface BlockSchedule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  daysOfWeek: number[]; // 0 = Sunday, 6 = Saturday
+  startTime: string; // HH:MM format
+  endTime: string; // HH:MM format
+  domains: string[]; // Domains to block during this schedule
+}
+
+/**
+ * Block attempt tracking
+ */
+export interface BlockAttempt {
+  domain: string;
+  timestamp: string;
+  overridden: boolean;
+  overrideReason?: string;
+  scheduleId?: string;
+}
+
+/**
+ * Active override for a blocked domain
+ */
+export interface ActiveOverride {
+  id: string;
+  domain: string;
+  startTime: number; // Timestamp in ms
+  expiresAt: number; // Timestamp in ms
+  reason?: string;
+}
+
+/**
+ * Default block configuration
+ */
+export const DEFAULT_BLOCK_CONFIG: BlockConfig = {
+  enabled: false,
+  blockedDomains: [],
+  timeLimits: {},
+  schedules: [],
+  softBlock: true,
+  overrideEnabled: true,
+  overrideMaxDuration: 30,
+};
+
+/**
+ * Check if a domain is currently blocked
+ */
+export function isDomainBlocked(domain: string, config: BlockConfig): boolean {
+  if (!config.enabled) return false;
+  return config.blockedDomains.includes(domain);
+}
+
+/**
+ * Check if domain has exceeded time limit today
+ */
+export function hasExceededTimeLimit(
+  domain: string,
+  usedMinutes: number,
+  config: BlockConfig
+): boolean {
+  if (!config.timeLimits[domain]) return false;
+  return usedMinutes >= config.timeLimits[domain];
+}
