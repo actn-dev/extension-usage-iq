@@ -9,6 +9,7 @@ import { initializeBlocking, updateBlockingRules } from '../../utils/blockManage
 import { getDomainMinutesUsedToday, getBlockConfig } from '../../utils/blockStorage';
 import { getSyncManager } from '../../utils/syncManager';
 import { getAuthManager } from '../../utils/authManager';
+import { getBlockConfigSync } from '../../utils/blockConfigSync';
 
 console.log('UsageIQ background service worker loaded');
 
@@ -22,8 +23,15 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Initialize tab tracker with all open tabs
   await initializeTabTracker();
   
-  // Initialize blocking system
+  // Fetch initial blocking config from server (if authenticated)
+  const blockConfigSync = getBlockConfigSync();
+  await blockConfigSync.fetchConfig();
+  
+  // Initialize blocking system with server config
   await initializeBlocking();
+  
+  // Start periodic config sync
+  blockConfigSync.startPeriodicSync();
   
   // Initialize sync manager
   const syncManager = getSyncManager();
@@ -174,6 +182,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } else if (alarm.name === 'checkSchedules') {
     // Check if schedule-based blocks need to be updated
     await checkAndUpdateSchedules();
+  } else if (alarm.name === 'syncBlockConfig') {
+    // Fetch fresh blocking config from server
+    const blockConfigSync = getBlockConfigSync();
+    await blockConfigSync.fetchConfig();
+    // Re-apply blocking rules with new config
+    await updateBlockingRules();
+  } else if (alarm.name === 'syncBlockAttempts') {
+    // Sync pending block attempts to server
+    const blockConfigSync = getBlockConfigSync();
+    await blockConfigSync.syncBlockAttempts();
   }
 });
 
@@ -217,17 +235,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  
+  if (message.type === 'UPDATE_BLOCKING_RULES') {
+    updateBlockingRules().then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      console.error('Error updating blocking rules:', error);
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
 });
 
 // Handle auth state changes
 async function handleAuthStateChange(authenticated: boolean): Promise<void> {
   const syncManager = getSyncManager();
+  const blockConfigSync = getBlockConfigSync();
   
   if (authenticated) {
     console.log('User logged in, starting auto-sync');
     await syncManager.startAutoSync();
-    // Perform immediate sync
+    // Perform immediate sync for activity
     await syncManager.syncNow();
+    // Fetch blocking config from server
+    await blockConfigSync.fetchConfig();
+    // Update blocking rules
+    await updateBlockingRules();
   } else {
     console.log('User logged out, stopping auto-sync');
     await syncManager.stopAutoSync();

@@ -177,7 +177,7 @@ export interface ActiveOverride {
  * Default block configuration
  */
 export const DEFAULT_BLOCK_CONFIG: BlockConfig = {
-  enabled: false,
+  enabled: true,
   blockedDomains: [],
   timeLimits: {},
   schedules: [],

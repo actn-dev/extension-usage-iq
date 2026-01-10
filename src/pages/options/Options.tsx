@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from '../../utils/toast';
 import '@pages/options/Options.css';
 import { getTodayStats, getWeeklyStats, formatTime, formatTimeDetailed, calculateProductivityScore } from '../../utils/analytics';
 import { getDailySummaries, getStorageInfo, getTodayActivity } from '../../utils/storage';
-import type { DailySummary, BlockConfig, BlockSchedule } from '../../types';
+import type { DailySummary, BlockConfig, DomainActivity } from '../../types';
 import { Login } from '@src/components/login';
-import { getBlockConfig, addBlockedDomain, removeBlockedDomain, setDomainTimeLimit, removeDomainTimeLimit, addBlockSchedule, updateBlockSchedule, removeBlockSchedule, getDomainMinutesUsedToday } from '../../utils/blockStorage';
-import { updateBlockingRules } from '../../utils/blockManager';
+import { getBlockConfig } from '../../utils/blockStorage';
+import { getBlockConfigSync } from '../../utils/blockConfigSync';
 
 interface Tab {
   id: string;
@@ -363,129 +364,41 @@ function HistoryTab({ data }: { data: Record<string, DailySummary> }) {
 
 function SettingsTab({ storageInfo, onExport }: { storageInfo: any; onExport: () => void }) {
   const [blockConfig, setBlockConfig] = useState<BlockConfig | null>(null);
-  const [newDomain, setNewDomain] = useState('');
-  const [selectedDomain, setSelectedDomain] = useState<string>('');
-  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(60);
-  const [scheduleForm, setScheduleForm] = useState<Partial<BlockSchedule>>({
-    startTime: '09:00',
-    endTime: '17:00',
-    daysOfWeek: [],
-    domains: [],
-  });
-  const [overrideEnabled, setOverrideEnabled] = useState(true);
-  const [overrideMaxDuration, setOverrideMaxDuration] = useState(30);
+  const [todayActivity, setTodayActivity] = useState<Record<string, DomainActivity>>({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     loadBlockConfig();
+    loadTodayActivity();
   }, []);
 
   const loadBlockConfig = async () => {
     const config = await getBlockConfig();
     setBlockConfig(config);
-    setOverrideEnabled(config.overrideEnabled);
-    setOverrideMaxDuration(config.overrideMaxDuration);
   };
 
-  const handleAddBlockedDomain = async () => {
-    if (!newDomain.trim()) return;
-    
-    // Clean and validate domain
-    let domain = newDomain.trim().toLowerCase();
-    domain = domain.replace(/^(https?:\/\/)?(www\.)?/, '');
-    domain = domain.split('/')[0];
-    
-    if (!domain) return;
-    
-    await addBlockedDomain(domain);
-    await updateBlockingRules();
-    setNewDomain('');
-    loadBlockConfig();
+  const loadTodayActivity = async () => {
+    const activity = await getTodayActivity();
+    setTodayActivity(activity.domains);
   };
 
-  const handleRemoveBlockedDomain = async (domain: string) => {
-    await removeBlockedDomain(domain);
-    await updateBlockingRules();
-    loadBlockConfig();
-  };
-
-  const handleSetTimeLimit = async () => {
-    if (!selectedDomain || timeLimitMinutes <= 0) return;
-    
-    await setDomainTimeLimit(selectedDomain, timeLimitMinutes);
-    await updateBlockingRules();
-    loadBlockConfig();
-    setSelectedDomain('');
-    setTimeLimitMinutes(60);
-  };
-
-  const handleRemoveTimeLimit = async (domain: string) => {
-    await removeDomainTimeLimit(domain);
-    await updateBlockingRules();
-    loadBlockConfig();
-  };
-
-  const handleAddSchedule = async () => {
-    if (!scheduleForm.startTime || !scheduleForm.endTime || 
-        !scheduleForm.daysOfWeek?.length || !scheduleForm.domains?.length) {
-      return;
+  const handleRefreshConfig = async () => {
+    setIsRefreshing(true);
+    try {
+      const blockConfigSync = getBlockConfigSync();
+      await blockConfigSync.fetchConfig();
+      await loadBlockConfig();
+      toast.success('Configuration refreshed', {
+        description: 'Latest blocking rules fetched from server',
+      });
+    } catch (error) {
+      console.error('Failed to refresh config:', error);
+      toast.error('Failed to refresh', {
+        description: 'Could not fetch latest rules from server',
+      });
+    } finally {
+      setIsRefreshing(false);
     }
-
-    const schedule: BlockSchedule = {
-      id: Date.now().toString(),
-      name: scheduleForm.name || `Schedule ${Date.now()}`,
-      startTime: scheduleForm.startTime,
-      endTime: scheduleForm.endTime,
-      daysOfWeek: scheduleForm.daysOfWeek,
-      domains: scheduleForm.domains,
-      enabled: true,
-    };
-
-    await addBlockSchedule(schedule);
-    await updateBlockingRules();
-    loadBlockConfig();
-    
-    // Reset form
-    setScheduleForm({
-      startTime: '09:00',
-      endTime: '17:00',
-      daysOfWeek: [],
-      domains: [],
-    });
-  };
-
-  const handleToggleSchedule = async (scheduleId: string, enabled: boolean) => {
-    if (!blockConfig) return;
-    
-    const schedule = blockConfig.schedules.find(s => s.id === scheduleId);
-    if (!schedule) return;
-    
-    await updateBlockSchedule(schedule.id, { enabled });
-    await updateBlockingRules();
-    loadBlockConfig();
-  };
-
-  const handleRemoveSchedule = async (scheduleId: string) => {
-    await removeBlockSchedule(scheduleId);
-    await updateBlockingRules();
-    loadBlockConfig();
-  };
-
-  const handleUpdateOverrideSettings = async () => {
-    if (!blockConfig) return;
-    
-    const updatedConfig = {
-      ...blockConfig,
-      overrideEnabled,
-      overrideMaxDuration,
-    };
-    
-    await chrome.storage.local.set({ blockConfig: updatedConfig });
-    loadBlockConfig();
-  };
-
-  const getDayName = (day: number): string => {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    return days[day];
   };
 
   if (!blockConfig) {
@@ -497,216 +410,173 @@ function SettingsTab({ storageInfo, onExport }: { storageInfo: any; onExport: ()
     );
   }
 
+  const blockedDomainsCount = blockConfig.blockedDomains?.length || 0;
+  const schedulesCount = blockConfig.schedules?.length || 0;
+  const timeLimitsCount = Object.keys(blockConfig.timeLimits || {}).length;
+
   return (
     <div className="space-y-6">
-      {/* Blocked Domains */}
-      <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Blocked Websites</h2>
-        <p className="text-gray-400 text-sm mb-4">
-          These websites will be completely blocked and cannot be accessed.
-        </p>
-        
-        <div className="flex gap-2 mb-4">
-          <input
-            type="text"
-            value={newDomain}
-            onChange={(e) => setNewDomain(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleAddBlockedDomain()}
-            placeholder="Enter domain (e.g., facebook.com)"
-            className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={handleAddBlockedDomain}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-          >
-            Add
-          </button>
-        </div>
-
-        <div className="space-y-2">
-          {blockConfig.blockedDomains.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-4">No blocked domains yet</p>
-          ) : (
-            blockConfig.blockedDomains.map(domain => (
-              <div key={domain} className="flex items-center justify-between bg-slate-700/50 rounded-lg px-4 py-3">
-                <span className="font-mono text-sm">{domain}</span>
-                <button
-                  onClick={() => handleRemoveBlockedDomain(domain)}
-                  className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors"
-                >
-                  Remove
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Time Limits */}
-      <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Time Limits</h2>
-        <p className="text-gray-400 text-sm mb-4">
-          Set daily time limits for specific websites. Once the limit is reached, the site will be blocked for the rest of the day.
-        </p>
-
-        <div className="flex gap-2 mb-4">
-          <select
-            value={selectedDomain}
-            onChange={(e) => setSelectedDomain(e.target.value)}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">Select a domain...</option>
-            {blockConfig.blockedDomains.map(domain => (
-              <option key={domain} value={domain}>{domain}</option>
-            ))}
-          </select>
-          <input
-            type="number"
-            value={timeLimitMinutes}
-            onChange={(e) => setTimeLimitMinutes(Number(e.target.value))}
-            min="1"
-            placeholder="Minutes"
-            className="w-32 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={handleSetTimeLimit}
-            disabled={!selectedDomain}
-            className="bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-medium transition-colors"
-          >
-            Set Limit
-          </button>
-        </div>
-
-        <div className="space-y-2">
-          {Object.entries(blockConfig.timeLimits).length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-4">No time limits configured</p>
-          ) : (
-            Object.entries(blockConfig.timeLimits).map(([domain, minutes]) => (
-              <DomainTimeLimitCard
-                key={domain}
-                domain={domain}
-                limitMinutes={minutes}
-                onRemove={handleRemoveTimeLimit}
-              />
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Schedules */}
-      <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Block Schedules</h2>
-        <p className="text-gray-400 text-sm mb-4">
-          Block websites during specific times and days (e.g., during work hours or focus time).
-        </p>
-
-        {/* Add Schedule Form */}
-        <div className="bg-slate-700/30 rounded-lg p-4 mb-4">
-          <h3 className="font-medium mb-3">Add New Schedule</h3>
+      {/* Blocking Status - READ-ONLY */}
+      <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg p-6">
+        <div className="text-center">
+          <div className="mb-4">
+            <span className="text-6xl">🛡️</span>
+          </div>
+          <h2 className="text-2xl font-bold mb-2">
+            Website Blocking Managed Centrally
+          </h2>
+          <p className="text-gray-400 mb-4 max-w-2xl mx-auto">
+            All website blocking rules are now managed from your admin dashboard.
+            You cannot add, edit, or remove blocking rules from this extension.
+          </p>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">Schedule Name</label>
-              <input
-                type="text"
-                value={scheduleForm.name || ''}
-                onChange={(e) => setScheduleForm({ ...scheduleForm, name: e.target.value })}
-                placeholder="Focus Time"
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+          {/* Current Status */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 max-w-xl mx-auto">
+            <div className="bg-slate-800/60 rounded-lg p-4">
+              <div className="text-3xl font-bold text-blue-400">{blockedDomainsCount}</div>
+              <div className="text-sm text-gray-400">Blocked Domains</div>
             </div>
-            
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Start Time</label>
-                <input
-                  type="time"
-                  value={scheduleForm.startTime}
-                  onChange={(e) => setScheduleForm({ ...scheduleForm, startTime: e.target.value })}
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">End Time</label>
-                <input
-                  type="time"
-                  value={scheduleForm.endTime}
-                  onChange={(e) => setScheduleForm({ ...scheduleForm, endTime: e.target.value })}
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+            <div className="bg-slate-800/60 rounded-lg p-4">
+              <div className="text-3xl font-bold text-purple-400">{timeLimitsCount}</div>
+              <div className="text-sm text-gray-400">Time Limits</div>
+            </div>
+            <div className="bg-slate-800/60 rounded-lg p-4">
+              <div className="text-3xl font-bold text-green-400">{schedulesCount}</div>
+              <div className="text-sm text-gray-400">Schedules</div>
             </div>
           </div>
 
-          <div className="mb-3">
-            <label className="block text-sm text-gray-400 mb-2">Days of Week</label>
-            <div className="flex gap-2 flex-wrap">
-              {[0, 1, 2, 3, 4, 5, 6].map(day => (
-                <button
-                  key={day}
-                  onClick={() => {
-                    const days = scheduleForm.daysOfWeek || [];
-                    const newDays = days.includes(day)
-                      ? days.filter(d => d !== day)
-                      : [...days, day];
-                    setScheduleForm({ ...scheduleForm, daysOfWeek: newDays });
-                  }}
-                  className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    scheduleForm.daysOfWeek?.includes(day)
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
-                  }`}
-                >
-                  {getDayName(day).slice(0, 3)}
-                </button>
-              ))}
-            </div>
+          <div className="flex gap-3 justify-center">
+            <a
+              href="http://localhost:3000/extension/blocking"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-medium transition-colors"
+            >
+              Manage Blocking Rules
+            </a>
+            <button
+              onClick={handleRefreshConfig}
+              disabled={isRefreshing}
+              className="inline-block bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-8 py-3 rounded-lg font-medium transition-colors flex items-center gap-2"
+            >
+              {isRefreshing ? (
+                <>
+                  <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Refreshing...
+                </>
+              ) : (
+                <>
+                  🔄 Refresh from Server
+                </>
+              )}
+            </button>
           </div>
-
-          <div className="mb-3">
-            <label className="block text-sm text-gray-400 mb-2">Domains to Block</label>
-            <div className="flex gap-2 flex-wrap">
-              {blockConfig.blockedDomains.map(domain => (
-                <button
-                  key={domain}
-                  onClick={() => {
-                    const domains = scheduleForm.domains || [];
-                    const newDomains = domains.includes(domain)
-                      ? domains.filter(d => d !== domain)
-                      : [...domains, domain];
-                    setScheduleForm({ ...scheduleForm, domains: newDomains });
-                  }}
-                  className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    scheduleForm.domains?.includes(domain)
-                      ? 'bg-green-600 text-white'
-                      : 'bg-slate-700 text-gray-400 hover:bg-slate-600'
-                  }`}
-                >
-                  {domain}
-                </button>
-              ))}
-            </div>
-            {blockConfig.blockedDomains.length === 0 && (
-              <p className="text-gray-500 text-xs mt-2">Add blocked domains first</p>
-            )}
-          </div>
-
-          <button
-            onClick={handleAddSchedule}
-            disabled={!scheduleForm.startTime || !scheduleForm.endTime || 
-                     !scheduleForm.daysOfWeek?.length || !scheduleForm.domains?.length}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors"
-          >
-            Add Schedule
-          </button>
         </div>
+      </div>
 
-        {/* Active Schedules */}
-        <div className="space-y-2">
-          {blockConfig.schedules.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-4">No schedules configured</p>
-          ) : (
-            blockConfig.schedules.map(schedule => (
+      {/* Active Blocked Domains List - READ-ONLY */}
+      {blockedDomainsCount > 0 && (
+        <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
+          <h2 className="text-xl font-semibold mb-4">Currently Blocked Domains</h2>
+          <p className="text-gray-400 text-sm mb-4">
+            These domains are being blocked by your admin. To modify this list, use the admin dashboard.
+          </p>
+          
+          <div className="space-y-2">
+            {blockConfig.blockedDomains.map(domain => {
+              const hasTimeLimit = blockConfig.timeLimits[domain] !== undefined;
+              const hasSchedule = blockConfig.schedules.some(s => s.domains.includes(domain));
+              const isPermanentBlock = !hasTimeLimit && !hasSchedule;
+              
+              // Get today's usage for this domain
+              const domainUsage = todayActivity[domain];
+              const totalMinutes = domainUsage ? Math.floor(domainUsage.totalTime / 60) : 0;
+              const foregroundMinutes = domainUsage ? Math.floor(domainUsage.foregroundTime / 60) : 0;
+              const timeLimit = blockConfig.timeLimits[domain];
+              const usagePercentage = timeLimit ? (totalMinutes / timeLimit) * 100 : 0;
+              
+              return (
+                <div key={domain} className="bg-slate-700/50 rounded-lg px-4 py-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 flex-1">
+                      <span className="font-mono text-sm font-medium">{domain}</span>
+                      <div className="flex gap-1 flex-wrap">
+                        {hasTimeLimit && (
+                          <span className="text-xs bg-blue-600/30 text-blue-400 px-2 py-0.5 rounded border border-blue-500/30">
+                            ⏱️ Limit: {blockConfig.timeLimits[domain]} min/day
+                          </span>
+                        )}
+                        {hasSchedule && (
+                          <span className="text-xs bg-purple-600/30 text-purple-400 px-2 py-0.5 rounded border border-purple-500/30">
+                            📅 Scheduled
+                          </span>
+                        )}
+                        {isPermanentBlock && (
+                          <span className="text-xs bg-red-600/30 text-red-400 px-2 py-0.5 rounded border border-red-500/30">
+                            🚫 Permanent
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Time Usage Info */}
+                  {domainUsage ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-gray-400">
+                        <span>Today's usage:</span>
+                        <span className="font-medium">
+                          {foregroundMinutes}m active / {totalMinutes}m total
+                          {timeLimit && (
+                            <span className={`ml-2 font-semibold ${
+                              usagePercentage >= 100 ? 'text-red-400' : 
+                              usagePercentage >= 80 ? 'text-yellow-400' : 
+                              'text-green-400'
+                            }`}>
+                              ({Math.round(usagePercentage)}%)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      {timeLimit && (
+                        <div className="w-full bg-slate-600 rounded-full h-2">
+                          <div
+                            className={`h-2 rounded-full transition-all ${
+                              usagePercentage >= 100 ? 'bg-gradient-to-r from-red-500 to-red-600' :
+                              usagePercentage >= 80 ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
+                              'bg-gradient-to-r from-blue-500 to-purple-500'
+                            }`}
+                            style={{ width: `${Math.min(usagePercentage, 100)}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500 italic">
+                      Not visited today
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Active Schedules List - READ-ONLY */}
+      {schedulesCount > 0 && (
+        <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
+          <h2 className="text-xl font-semibold mb-4">Active Schedules</h2>
+          <p className="text-gray-400 text-sm mb-4">
+            These blocking schedules are configured by your admin.
+          </p>
+          
+          <div className="space-y-3">
+            {blockConfig.schedules.map(schedule => (
               <div key={schedule.id} className="bg-slate-700/50 rounded-lg p-4">
                 <div className="flex items-start justify-between mb-2">
                   <div>
@@ -715,29 +585,18 @@ function SettingsTab({ storageInfo, onExport }: { storageInfo: any; onExport: ()
                       {schedule.startTime} - {schedule.endTime}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleToggleSchedule(schedule.id, !schedule.enabled)}
-                      className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                        schedule.enabled
-                          ? 'bg-green-600 text-white hover:bg-green-700'
-                          : 'bg-slate-600 text-gray-300 hover:bg-slate-500'
-                      }`}
-                    >
-                      {schedule.enabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                    <button
-                      onClick={() => handleRemoveSchedule(schedule.id)}
-                      className="text-red-400 hover:text-red-300 text-sm"
-                    >
-                      ✕
-                    </button>
-                  </div>
+                  <span className={`px-3 py-1 rounded text-xs font-medium ${
+                    schedule.enabled
+                      ? 'bg-green-600/30 text-green-400'
+                      : 'bg-slate-600/30 text-gray-400'
+                  }`}>
+                    {schedule.enabled ? 'Active' : 'Disabled'}
+                  </span>
                 </div>
                 <div className="flex gap-2 flex-wrap mb-2">
                   {schedule.daysOfWeek.map(day => (
                     <span key={day} className="px-2 py-1 bg-blue-600/30 text-blue-400 rounded text-xs">
-                      {getDayName(day)}
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day]}
                     </span>
                   ))}
                 </div>
@@ -749,98 +608,38 @@ function SettingsTab({ storageInfo, onExport }: { storageInfo: any; onExport: ()
                   ))}
                 </div>
               </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Override Settings */}
-      <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Override Settings</h2>
-        <p className="text-gray-400 text-sm mb-4">
-          Allow temporary access to blocked sites with a reason. Useful for emergencies or urgent work.
-        </p>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Enable Override Requests</p>
-              <p className="text-sm text-gray-400">Allow requesting temporary access to blocked sites</p>
-            </div>
-            <button
-              onClick={() => setOverrideEnabled(!overrideEnabled)}
-              className={`relative w-12 h-6 rounded-full transition-colors ${
-                overrideEnabled ? 'bg-green-600' : 'bg-slate-600'
-              }`}
-            >
-              <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
-                overrideEnabled ? 'translate-x-6' : 'translate-x-0'
-              }`} />
-            </button>
+            ))}
           </div>
-
-          <div>
-            <label className="block font-medium mb-2">Maximum Override Duration (minutes)</label>
-            <input
-              type="number"
-              value={overrideMaxDuration}
-              onChange={(e) => setOverrideMaxDuration(Number(e.target.value))}
-              min="5"
-              max="480"
-              disabled={!overrideEnabled}
-              className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              Users can request temporary access for up to this duration
-            </p>
-          </div>
-
-          <button
-            onClick={handleUpdateOverrideSettings}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-          >
-            Save Override Settings
-          </button>
         </div>
-      </div>
+      )}
 
       {/* Storage Info */}
-      <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Storage Information</h2>
-        {storageInfo && (
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-gray-400">Storage Used:</span>
-              <span className="font-medium">{(storageInfo.bytesInUse / 1024).toFixed(2)} KB</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-gray-400">Storage Quota:</span>
-              <span className="font-medium">{(storageInfo.quota / 1024 / 1024).toFixed(2)} MB</span>
-            </div>
-            <div className="mt-4">
-              <div className="w-full bg-slate-700 rounded-full h-3">
-                <div
-                  className="bg-gradient-to-r from-blue-500 to-purple-500 h-3 rounded-full"
-                  style={{ width: `${(storageInfo.bytesInUse / storageInfo.quota) * 100}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-400 mt-2">
-                {((storageInfo.bytesInUse / storageInfo.quota) * 100).toFixed(2)}% used
-              </p>
-            </div>
+      {storageInfo && (
+        <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
+          <h2 className="text-xl font-semibold mb-4">Storage Usage</h2>
+          <p className="text-gray-400 text-sm mb-2">
+            {(storageInfo.bytesInUse / 1024).toFixed(2)} KB used
+          </p>
+          <div className="w-full bg-slate-600 rounded-full h-2">
+            <div
+              className="h-2 rounded-full bg-gradient-to-r from-blue-500 to-purple-500"
+              style={{ width: `${(storageInfo.bytesInUse / storageInfo.quota) * 100}%` }}
+            />
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Export Data */}
       <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
         <h2 className="text-xl font-semibold mb-4">Export Data</h2>
-        <p className="text-gray-400 mb-4">Download all your activity data in JSON format</p>
+        <p className="text-gray-400 mb-4 text-sm">
+          Download your browsing activity data as JSON for backup or analysis.
+        </p>
         <button
           onClick={onExport}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+          className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
         >
-          Export to JSON
+          Export Data
         </button>
       </div>
 
@@ -856,66 +655,7 @@ function SettingsTab({ storageInfo, onExport }: { storageInfo: any; onExport: ()
   );
 }
 
-// Helper component for time limit display
-function DomainTimeLimitCard({ domain, limitMinutes, onRemove }: { 
-  domain: string; 
-  limitMinutes: number; 
-  onRemove: (domain: string) => void;
-}) {
-  const [usedMinutes, setUsedMinutes] = useState(0);
-  
-  useEffect(() => {
-    loadUsage();
-    const interval = setInterval(loadUsage, 10000); // Update every 10 seconds
-    return () => clearInterval(interval);
-  }, [domain]);
-
-  const loadUsage = async () => {
-    const minutes = await getDomainMinutesUsedToday(domain);
-    setUsedMinutes(minutes);
-  };
-
-  const percentage = Math.min((usedMinutes / limitMinutes) * 100, 100);
-  const isOverLimit = usedMinutes >= limitMinutes;
-
-  return (
-    <div className="bg-slate-700/50 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-sm">{domain}</span>
-        <button
-          onClick={() => onRemove(domain)}
-          className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors"
-        >
-          Remove
-        </button>
-      </div>
-      
-      <div className="flex items-center justify-between text-sm mb-2">
-        <span className={isOverLimit ? 'text-red-400' : 'text-gray-400'}>
-          {usedMinutes} / {limitMinutes} minutes used
-        </span>
-        <span className={`font-medium ${isOverLimit ? 'text-red-400' : 'text-blue-400'}`}>
-          {percentage.toFixed(0)}%
-        </span>
-      </div>
-      
-      <div className="w-full bg-slate-600 rounded-full h-2">
-        <div
-          className={`h-2 rounded-full transition-all ${
-            isOverLimit ? 'bg-red-500' : 'bg-gradient-to-r from-green-500 to-blue-500'
-          }`}
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
-      
-      {isOverLimit && (
-        <p className="text-xs text-red-400 mt-2 font-medium">
-          ⚠️ Limit exceeded - site is blocked
-        </p>
-      )}
-    </div>
-  );
-}
+// Helper component for time limit display - REMOVED, no longer needed in extension
 
 // Account Tab Component
 function AccountTab() {

@@ -127,6 +127,13 @@ export default function Popup() {
           </h1>
           {blockConfig && (
             <div className="flex items-center gap-2">
+              {!blockConfig.enabled && (
+                <div className="bg-orange-600/20 border border-orange-600/50 rounded px-2 py-1">
+                  <span className="text-xs text-orange-400 font-medium">
+                    ⚠️ Blocking OFF
+                  </span>
+                </div>
+              )}
               {activeOverrides.length > 0 && (
                 <div className="bg-yellow-600/20 border border-yellow-600/50 rounded px-2 py-1">
                   <span className="text-xs text-yellow-400 font-medium">
@@ -134,7 +141,7 @@ export default function Popup() {
                   </span>
                 </div>
               )}
-              {blockConfig.blockedDomains.length > 0 && (
+              {blockConfig.blockedDomains.length > 0 && blockConfig.enabled && (
                 <div className="bg-red-600/20 border border-red-600/50 rounded px-2 py-1">
                   <span className="text-xs text-red-400 font-medium">
                     {blockConfig.blockedDomains.length} Blocked
@@ -162,13 +169,21 @@ export default function Popup() {
                 <div className="text-sm font-medium text-white truncate" title={currentUrl}>
                   {currentUrl}
                 </div>
+                {!blockConfig?.enabled && (
+                  <div className="text-xs text-orange-400 mt-1">
+                    ⚠️ Blocking is disabled in settings
+                  </div>
+                )}
               </div>
               <button
                 onClick={handleToggleBlockCurrentSite}
+                disabled={!blockConfig?.enabled && !isCurrentSiteBlocked}
                 className={`ml-3 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                   isCurrentSiteBlocked
                     ? 'bg-green-600 hover:bg-green-700 text-white'
-                    : 'bg-red-600 hover:bg-red-700 text-white'
+                    : blockConfig?.enabled
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : 'bg-slate-600 cursor-not-allowed text-gray-400'
                 }`}
               >
                 {isCurrentSiteBlocked ? 'Unblock' : 'Block'}

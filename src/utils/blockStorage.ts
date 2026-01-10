@@ -13,80 +13,76 @@ export async function getBlockConfig(): Promise<BlockConfig> {
 
 /**
  * Update block configuration
+ * NOTE: This is now READ-ONLY. All config changes must come from server.
+ * Use the admin dashboard to modify blocking rules.
  */
 export async function updateBlockConfig(updates: Partial<BlockConfig>): Promise<void> {
-  const currentConfig = await getBlockConfig();
-  const newConfig = { ...currentConfig, ...updates };
-  await chrome.storage.local.set({ blockConfig: newConfig });
-  console.log('Block config updated:', newConfig);
+  console.warn('⚠️ updateBlockConfig() is disabled. All blocking config is managed server-side.');
+  console.warn('Use the admin dashboard at http://localhost:3000/extension/blocking to manage rules.');
+  // Do nothing - server is source of truth
 }
 
 /**
  * Add a domain to blocked list
+ * NOTE: Disabled - use server admin dashboard
  */
 export async function addBlockedDomain(domain: string): Promise<void> {
-  const config = await getBlockConfig();
-  if (!config.blockedDomains.includes(domain)) {
-    config.blockedDomains.push(domain);
-    await chrome.storage.local.set({ blockConfig: config });
-  }
+  console.warn('⚠️ addBlockedDomain() is disabled. Use admin dashboard to add domains.');
+  // Server is source of truth
 }
 
 /**
  * Remove a domain from blocked list
+ * NOTE: Disabled - use server admin dashboard
  */
 export async function removeBlockedDomain(domain: string): Promise<void> {
-  const config = await getBlockConfig();
-  config.blockedDomains = config.blockedDomains.filter(d => d !== domain);
-  await chrome.storage.local.set({ blockConfig: config });
+  console.warn('⚠️ removeBlockedDomain() is disabled. Use admin dashboard to remove domains.');
+  // Server is source of truth
 }
 
 /**
  * Set time limit for a domain (minutes per day)
+ * NOTE: Disabled - use server admin dashboard
  */
 export async function setDomainTimeLimit(domain: string, minutes: number): Promise<void> {
-  const config = await getBlockConfig();
-  config.timeLimits[domain] = minutes;
-  await chrome.storage.local.set({ blockConfig: config });
+  console.warn('⚠️ setDomainTimeLimit() is disabled. Use admin dashboard to set time limits.');
+  // Server is source of truth
 }
 
 /**
  * Remove time limit for a domain
+ * NOTE: Disabled - use server admin dashboard
  */
 export async function removeDomainTimeLimit(domain: string): Promise<void> {
-  const config = await getBlockConfig();
-  delete config.timeLimits[domain];
-  await chrome.storage.local.set({ blockConfig: config });
+  console.warn('⚠️ removeDomainTimeLimit() is disabled. Use admin dashboard to remove time limits.');
+  // Server is source of truth
 }
 
 /**
  * Add a block schedule
+ * NOTE: Disabled - use server admin dashboard
  */
 export async function addBlockSchedule(schedule: BlockSchedule): Promise<void> {
-  const config = await getBlockConfig();
-  config.schedules.push(schedule);
-  await chrome.storage.local.set({ blockConfig: config });
+  console.warn('⚠️ addBlockSchedule() is disabled. Use admin dashboard to add schedules.');
+  // Server is source of truth
 }
 
 /**
  * Update a block schedule
+ * NOTE: Disabled - use server admin dashboard
  */
 export async function updateBlockSchedule(scheduleId: string, updates: Partial<BlockSchedule>): Promise<void> {
-  const config = await getBlockConfig();
-  const index = config.schedules.findIndex(s => s.id === scheduleId);
-  if (index !== -1) {
-    config.schedules[index] = { ...config.schedules[index], ...updates };
-    await chrome.storage.local.set({ blockConfig: config });
-  }
+  console.warn('⚠️ updateBlockSchedule() is disabled. Use admin dashboard to update schedules.');
+  // Server is source of truth
 }
 
 /**
  * Remove a block schedule
+ * NOTE: Disabled - use server admin dashboard
  */
 export async function removeBlockSchedule(scheduleId: string): Promise<void> {
-  const config = await getBlockConfig();
-  config.schedules = config.schedules.filter(s => s.id !== scheduleId);
-  await chrome.storage.local.set({ blockConfig: config });
+  console.warn('⚠️ removeBlockSchedule() is disabled. Use admin dashboard to remove schedules.');
+  // Server is source of truth
 }
 
 /**

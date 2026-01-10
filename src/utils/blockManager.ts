@@ -36,8 +36,18 @@ export async function updateBlockingRules(): Promise<void> {
     // Get domains that should be blocked right now
     const domainsToBlock = await getDomainsToBlock();
     
-    // Create rules for each blocked domain
-    const rules = domainsToBlock.map((domain, index) => createBlockRule(domain, RULE_ID_START + index));
+    console.log('🚫 Domains to block:', domainsToBlock);
+    
+    // Create TWO rules per domain (with and without subdomain)
+    const rules: chrome.declarativeNetRequest.Rule[] = [];
+    let ruleId = RULE_ID_START;
+    
+    for (const domain of domainsToBlock) {
+      // Rule 1: Match with subdomain (www.domain.com)
+      rules.push(createBlockRule(domain, ruleId++, true));
+      // Rule 2: Match without subdomain (domain.com)
+      rules.push(createBlockRule(domain, ruleId++, false));
+    }
     
     // Remove old rules and add new ones
     await clearAllBlockingRules();
@@ -46,7 +56,9 @@ export async function updateBlockingRules(): Promise<void> {
       await chrome.declarativeNetRequest.updateDynamicRules({
         addRules: rules,
       });
-      console.log(`Added ${rules.length} blocking rules`);
+      console.log(`✅ Added ${rules.length} blocking rules for ${domainsToBlock.length} domains`);
+    } else {
+      console.log('⚠️ No blocking rules to add');
     }
   } catch (error) {
     console.error('Error updating blocking rules:', error);
@@ -55,26 +67,39 @@ export async function updateBlockingRules(): Promise<void> {
 
 /**
  * Get list of domains that should be blocked right now
+ * 
+ * Priority logic:
+ * 1. If domain has time limit -> block only when limit exceeded
+ * 2. If domain has schedule -> block only during schedule times  
+ * 3. If domain is in blocked list (no time limit/schedule) -> always block
  */
 async function getDomainsToBlock(): Promise<string[]> {
   const config = await getBlockConfig();
+  
+  console.log('📋 Block config:', {
+    enabled: config.enabled,
+    blockedDomains: config.blockedDomains,
+    timeLimits: config.timeLimits,
+    schedules: config.schedules?.length || 0
+  });
+  
+  if (!config.enabled) {
+    console.log('⚠️ Blocking is DISABLED in config');
+    return [];
+  }
+  
   const overrides = await getActiveOverrides();
   const overrideDomains = new Set(overrides.map(o => o.domain));
   
   const domainsToBlock: string[] = [];
+  const domainsWithTimeLimits = new Set(Object.keys(config.timeLimits));
+  const scheduleBlockedDomains = getScheduleBlockedDomains(config);
+  const domainsWithSchedules = new Set(scheduleBlockedDomains);
   
-  // Check blocked domains
-  for (const domain of config.blockedDomains) {
+  // Check time limits FIRST (higher priority - allows usage until limit)
+  for (const [domain, limitMinutes] of Object.entries(config.timeLimits)) {
     // Skip if has active override
     if (overrideDomains.has(domain)) continue;
-    
-    domainsToBlock.push(domain);
-  }
-  
-  // Check time limits
-  for (const [domain, limitMinutes] of Object.entries(config.timeLimits)) {
-    // Skip if already in blocked list or has override
-    if (domainsToBlock.includes(domain) || overrideDomains.has(domain)) continue;
     
     const usedMinutes = await getDomainMinutesUsedToday(domain);
     if (usedMinutes >= limitMinutes) {
@@ -82,15 +107,40 @@ async function getDomainsToBlock(): Promise<string[]> {
     }
   }
   
-  // Check schedule-based blocks
-  const scheduleBlockedDomains = getScheduleBlockedDomains(config);
+  // Check schedule-based blocks SECOND
   for (const domain of scheduleBlockedDomains) {
-    // Skip if already in blocked list or has override
+    // Skip if already blocked or has override
     if (domainsToBlock.includes(domain) || overrideDomains.has(domain)) continue;
     
     domainsToBlock.push(domain);
   }
   
+  // Check permanent blocked domains LAST (only if no time limit or schedule)
+  for (const domain of config.blockedDomains) {
+    // Skip if has active override
+    if (overrideDomains.has(domain)) {
+      console.log(`⏭️ Skipping ${domain} - has active override`);
+      continue;
+    }
+    
+    // Skip if already blocked
+    if (domainsToBlock.includes(domain)) {
+      console.log(`⏭️ Skipping ${domain} - already in block list`);
+      continue;
+    }
+    
+    // Skip if domain has time limit or schedule (those take priority)
+    if (domainsWithTimeLimits.has(domain) || domainsWithSchedules.has(domain)) {
+      console.log(`⏭️ Skipping ${domain} - has time limit or schedule (will check separately)`);
+      continue;
+    }
+    
+    // Permanently block this domain (no time limit or schedule)
+    console.log(`🚫 Adding permanent block for: ${domain}`);
+    domainsToBlock.push(domain);
+  }
+  
+  console.log('✅ Final domains to block:', domainsToBlock);
   return domainsToBlock;
 }
 
@@ -140,7 +190,11 @@ function isTimeInRange(currentTime: string, startTime: string, endTime: string):
 /**
  * Create a block rule for a domain
  */
-function createBlockRule(domain: string, ruleId: number): chrome.declarativeNetRequest.Rule {
+function createBlockRule(domain: string, ruleId: number, withSubdomain: boolean): chrome.declarativeNetRequest.Rule {
+  // Pattern with subdomain: *://*.domain.com/*  (matches www.domain.com, sub.domain.com)
+  // Pattern without subdomain: *://domain.com/*  (matches domain.com)
+  const urlFilter = withSubdomain ? `*://*.${domain}/*` : `*://${domain}/*`;
+  
   return {
     id: ruleId,
     priority: 1,
@@ -151,7 +205,7 @@ function createBlockRule(domain: string, ruleId: number): chrome.declarativeNetR
       },
     },
     condition: {
-      urlFilter: `*://*.${domain}/*`,
+      urlFilter,
       resourceTypes: [
         chrome.declarativeNetRequest.ResourceType.MAIN_FRAME,
       ],

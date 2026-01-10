@@ -2,8 +2,8 @@
  * API Client for communicating with Dodily backend
  */
 
-// export const API_BASE_URL = 'http://localhost:3000';
-export const API_BASE_URL = 'https://dodily-nextjs.vercel.app';
+export const API_BASE_URL = 'http://localhost:3000';
+// export const API_BASE_URL = 'https://dodily-nextjs.vercel.app';
 // For development: const API_BASE_URL = 'http://localhost:3000';
 
 interface SyncResponse {

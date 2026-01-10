@@ -2,51 +2,121 @@
 
 ## Overview
 
-The website blocking feature allows users to control and limit their access to distracting websites through three main mechanisms:
+The website blocking feature is a **server-managed** system that allows administrators to control and limit user access to distracting websites through three main mechanisms:
 
 1. **Permanent Blocking**: Completely block specific domains
-2. **Time Limits**: Set daily time limits for specific domains
+2. **Time Limits**: Set daily time limits for specific domains (blocks after limit exceeded)
 3. **Schedule-Based Blocking**: Block domains during specific times and days (e.g., work hours, focus time)
+
+**🔒 Key Architecture**: The server is the **single source of truth** for all blocking rules. The browser extension is a **read-only enforcement client** that:
+- Fetches configuration from the server
+- Enforces blocking rules locally using declarativeNetRequest API
+- Logs block attempts back to the server
+- Cannot modify blocking rules (all changes must be made via admin dashboard)
 
 ## Architecture
 
-### Core Components
+### Core Components (Server-Managed Architecture)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Background Service Worker                 │
-│  - Initializes blocking system on startup                    │
-│  - Checks time limits every minute                           │
-│  - Checks schedules every 5 minutes                          │
-│  - Updates blocking rules dynamically                        │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                      Block Manager                            │
-│  - Manages declarativeNetRequest rules                       │
-│  - Determines which domains to block                         │
-│  - Handles override grants/revocations                       │
-│  - Schedule-based blocking logic                             │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                      Block Storage                            │
-│  - CRUD operations for block configuration                   │
-│  - Manages blocked domains list                              │
-│  - Manages time limits                                       │
-│  - Manages schedules                                         │
-│  - Tracks block attempts and overrides                       │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                    Chrome Storage API                         │
-│  - Persists block configuration                              │
-│  - Stores active overrides                                   │
-│  - Logs block attempts                                       │
-└─────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                           ADMIN DASHBOARD (Next.js)                            │
+│  - Full CRUD for blocking rules                                               │
+│  - Manage blocked domains, time limits, schedules                             │
+│  - View block attempt logs and analytics                                      │
+│  - Enable/disable blocking globally                                           │
+│  URL: http://localhost:3000/extension/blocking                                │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ↓ (tRPC + REST API)
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                           SERVER DATABASE (SQLite)                             │
+│  Tables:                                                                       │
+│  - extensionBlockConfig (enabled, softBlock, overrideEnabled, etc.)           │
+│  - extensionBlockedDomain (domain, timeLimit, userId)                         │
+│  - extensionBlockSchedule (name, times, days, domains)                        │
+│  - extensionBlockAttempt (domain, timestamp, reason, overridden)              │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ↓ (REST API)
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                      EXTENSION: Background Service Worker                      │
+│  - Fetches config from server every 5 minutes (auto-sync)                     │
+│  - Fetches config on startup and login                                        │
+│  - Manual refresh trigger from Options UI                                     │
+│  - Checks time limits every minute                                            │
+│  - Checks schedules every 5 minutes                                           │
+│  - Updates declarativeNetRequest rules dynamically                            │
+│  - Uploads block attempt logs to server                                       │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ↓
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                      EXTENSION: Block Config Sync                              │
+│  - fetchConfig(): GET /api/extension/blocking/config                          │
+│  - transformToLocalFormat(): Convert server format to extension format        │
+│  - Cache config locally (read-only, max age 10 min)                           │
+│  - syncBlockAttempts(): POST /api/extension/blocking/attempts                 │
+#### Server-Side (Admin Dashboard)
+1. **Admin Blocking Page** (`/extension/blocking`)
+   - Full CRUD for blocked domains
+   - Set time limits per domain
+   - Enable/disable blocking globally
+   - Configure soft block and override settings
+   - View all blocked domains with stats
+
+2. **Schedule Management** (`/extension/blocking/schedules`)
+   - Create/edit/delete schedules
+   - Set time ranges and days of week
+   - Assign domains to schedules
+   - Enable/disable individual schedules
+
+3. **Analytics (Future)**
+   - Block attempt history
+   - Domain usage statistics
+   - Override tracking
+
+#### Extension (Client-Side - Read-Only)
+1. **Options UI** (`src/pages/options/Options.tsx` - Settings Tab)
+   - **READ-ONLY display** of blocked domains
+   - Shows time usage vs time limits with progress bars
+   - Shows which domains are permanently blocked vs time-limited vs scheduled
+   - "Manage Blocking Rules" button → Opens admin dashboard
+   - **"Refresh from Server"** button → Immediate config sync
+   - Cannot add/remove domains (redirects to admin dashboard)
+
+2. **Popup UI** (`src/pages/popup/Popup.tsx`)
+   - View current site status
+   - Quick link to admin dashboard
+   - View active overrides (if enabled)
+
+3. **Blocked Page** (`src/pages/blocked/BlockedPage.tsx`)
+   - Shows when user tries to access blocked site
+   - Displays block reason:
+     - 🚫 Permanent block
+     - ⏱️ Time limit exceeded (shows usage/limit)
+     - 📅 Blocked by schedule (shows schedule name)
+   - Override request interface (if enabled)
+   - Link back to admin dashboard         ↓
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                      EXTENSION: Block Storage (READ-ONLY)                      │
+│  - getBlockConfig(): Read cached config from chrome.storage.local             │
+│  - All write operations DISABLED with warnings:                               │
+│    ⚠️ updateBlockConfig() → "Use admin dashboard"                             │
+│    ⚠️ addBlockedDomain() → "Use admin dashboard"                              │
+│    ⚠️ setDomainTimeLimit() → "Use admin dashboard"                            │
+│    ⚠️ addBlockSchedule() → "Use admin dashboard"                              │
+│  - Only server can modify config                                              │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ↓
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                    Chrome Storage API (Local Cache Only)                       │
+│  - blockConfig: Cached server config (refreshed every 5 min)                  │
+│  - blockConfigLastFetch: Timestamp of last sync                               │
+│  - activeOverrides: Local override tracking                                   │
+│  - blockAttempts: Queued attempts pending upload                              │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### User Interface Components
@@ -225,76 +295,369 @@ function isScheduleActive(schedule: BlockSchedule): boolean {
 async function grantOverride(domain: string, reason?: string) {
   const config = await getBlockConfig();
   const expiresAt = Date.now() + (config.overrideMaxDuration * 60 * 1000);
-  
-  await addActiveOverride({
-    id: `${domain}-${Date.now()}`,
-    domain,
-    startTime: Date.now(),
-    expiresAt,
-    reason
-  });
-  
-  // Update rules to unblock
-  await updateBlockingRules();
-  
-  // Log for tracking
-  await logBlockAttempt({
-    domain,
+### Server (Next.js - Admin Dashboard)
+```
+apps/nextjs/src/
+├── server/
+│   ├── db/
+│   │   └── schema.ts                           # Database tables (extensionBlock*)
+│   └── api/
+│       └── routers/
+│           └── extension-blocking.ts           # tRPC router (13 procedures)
+├── app/
+│   ├── api/extension/blocking/
+│   │   ├── config/route.ts                     # GET config for extension
+│   │   └── attempts/route.ts                   # POST block attempts
+│   └── extension/blocking/
+│       ├── page.tsx                            # Main blocking management
+│       ├── schedules/page.tsx                  # Schedule management
+│       └── _components/
+│           ├── block-config-form.tsx           # Enable/disable toggles
+│           ├── domain-list.tsx                 # Domain CRUD
+│           └── schedule-list.tsx               # Schedule CRUD
+```
+
+### Extension (Browser Extension - Read-Only Client)
+```
+UsageIQ/src/
+├── types/index.ts                              # Type definitions
+├── utils/
+│   ├── blockConfigSync.ts                      # NEW: Server sync manager
+│   ├── blockStorage.ts                         # READ-ONLY storage ops
+│   ├── blockManager.ts                         # Blocking enforcement
+│   └── toast.ts                                # NEW: Custom toast (no deps)
+├── pages/
+│   ├── background/index.ts                     # Service worker + alarms
+│   ├── blocked/
+│   │   ├── index.html
+│   │   ├── BlockedPage.tsx                     # Blocked page UI
+│   │   └── index.css
+│   ├── options/Options.tsx                     # READ-ONLY settings UI
+│   └── popup/Popup.tsx                         # Popup with quick links
+└── manifest.json           
     timestamp: new Date().toISOString(),
     overridden: true,
     overrideReason: reason
-  });
+  })Server API (REST Endpoints)
+
+#### GET `/api/extension/blocking/config`
+**Purpose**: Extension fetches blocking configuration
+**Auth**: Cookie-based session (Better Auth)
+**Response**:
+```json
+{
+  "enabled": true,
+  "softBlock": false,
+  "overrideEnabled": false,
+  "overrideMaxDuration": 30,
+  "blockedDomains": [
+    { "domain": "chatgpt.com", "timeLimit": null },
+    { "domain": "youtube.com", "timeLimit": 10 }
+  ],
+  "schedules": [
+    {
+      "id": "abc123",
+      "name": "Work Hours",
+      "enabled": true,
+      "daysOfWeek": [1, 2, 3, 4, 5],
+      "startTime": "09:00",
+      "endTime": "17:00",
+      "domains": ["facebook.com", "twitter.com"]
+    }
+  ]
 }
 ```
 
-## File Structure
-
-```
-src/
-├── types/index.ts                    # Type definitions
-├── utils/
-│   ├── blockStorage.ts              # Storage operations
-│   └── blockManager.ts              # Blocking logic
-├── pages/
-│   ├── background/index.ts          # Service worker with alarms
-│   ├── blocked/
-│   │   ├── index.html
-│   │   ├── BlockedPage.tsx          # Blocked page UI
-│   │   └── index.css
-│   ├── options/Options.tsx          # Settings UI (Settings tab)
-│   └── popup/Popup.tsx              # Popup with quick controls
-└── manifest.json                     # Permissions & config
+#### POST `/api/extension/blocking/attempts`
+**Purpose**: Extension uploads block attempt logs
+**Auth**: Cookie-based session
+**Request Body**:
+```json
+{
+  "attempts": [
+    {
+      "domain": "youtube.com",
+      "timestamp": "2026-01-10T15:30:00Z",
+      "reason": "time-limit",
+      "overridden": false
+    }
+  ]
+}
 ```
 
-## API Reference
+### Server API (tRPC Procedures)
 
-### Block Storage (`blockStorage.ts`)
+All tRPC procedures in `extensionBlocking` router (admin dashboard only):
+Admin Dashboard (Server-Side Management)
 
-#### Configuration Management
-- `getBlockConfig(): Promise<BlockConfig>` - Get current configuration
-- `updateBlockConfig(updates: Partial<BlockConfig>): Promise<void>` - Update configuration
+#### 1. Access Admin Dashboard
+- URL: `http://localhost:3000/extension/blocking`
+- Login required (Better Auth)
+- Must be authenticated as extension user
 
-#### Domain Management
-- `addBlockedDomain(domain: string): Promise<void>` - Add domain to block list
-- `removeBlockedDomain(domain: string): Promise<void>` - Remove from block list
+#### 2. Block a Website Permanently
 
-#### Time Limits
-- `setDomainTimeLimit(domain: string, minutes: number): Promise<void>` - Set time limit
-- `removeDomainTimeLimit(domain: string): Promise<void>` - Remove time limit
-- `getDomainMinutesUsedToday(domain: string): Promise<number>` - Get usage
+**Steps:**
+1. Go to admin dashboard
+2. In "Add Blocked Domain" section, enter domain (e.g., `chatgpt.com`)
+3. Leave "Time Limit" empty for permanent block
+4. Click "Add Domain"
+5. Domain appears in "Blocked Domains" list
 
-#### Schedules
-- `addBlockSchedule(schedule: BlockSchedule): Promise<void>` - Add schedule
-- `updateBlockSchedule(scheduleId: string, updates: Partial<BlockSchedule>): Promise<void>` - Update schedule
-- `removeBlockSchedule(scheduleId: string): Promise<void>` - Remove schedule
+**Result**: Site is blocked immediately (may take up to 5 min for extension to sync)
 
-#### Overrides
-- `getActiveOverrides(): Promise<ActiveOverride[]>` - Get active overrides
-- `addActiveOverride(override: ActiveOverride): Promise<void>` - Grant override
-- `removeActiveOverride(domain: string): Promise<void>` - Revoke override
-- `hasActiveOverride(domain: string): Promise<boolean>` - Check override status
+#### 3. Set Time Limit
 
-#### Logging
+**Steps:**
+1. Go to admin dashboard
+2. In "Add Blocked Domain" section, enter domain (e.g., `youtube.com`)
+3. Enter time limit in minutes (e.g., `10` for 10 minutes per day)
+4. Click "Add Domain"
+
+**How it works:**
+- Extension tracks total time spent on domain
+- Domain is **accessible until limit is reached**
+- When limit exceeded, domain is blocked for rest of day
+- Resets at midnight
+
+#### 4. Create Block Schedule
+
+**Example: Block social media during work hours**
+
+1. Go to admin dashboard → Schedules page
+2. Click "Add New Schedule"
+3. Fill in form:
+   - **Name**: "Work Hours"
+   - **Start Time**: 09:00
+   - **End Time**: 17:00
+   - **Days**: Check Mon, Tue, Wed, Thu, Fri
+   - **Domains**: Enter `facebook.com`, `twitter.com`, etc.
+   - **Enabled**: Check to activate
+4. Click "Add Schedule"
+
+**Schedule Features:**
+- Can have multiple schedules
+- Enable/disable schedules individually
+- Supports overnight ranges (e.g., 22:00 - 06:00)
+- Domains blocked ONLY during schedule times
+
+#### 5. Enable/Disable Blocking
+
+**Master Toggle:**
+1. Go to admin dashboard
+2. Find "Block Configuration" section
+3. Toggle "Enable Blocking" switch
+4. Click "Save Configuration"
+
+**Result**: When disabled, all blocking rules are removed (even if domains are in list)
+
+### Extension (Client-Side - View Only)
+
+#### 1. View Current Blocking Rules
+
+**Steps:**
+1. Right-click extension icon → Options
+2. Go to "Settings" tab
+3. Scroll to "Website Blocking Managed Centrally" section
+
+**What you see:**
+- Count of blocked domains, time limits, schedules
+- List of all blocked domains with:
+  - 🚫 Permanent blocks (red badge)
+  - ⏱️ Time limits (blue badge with limit)
+  - 📅 Scheduled blocks (purple badge)
+- Today's usage for each domain:
+  - "Xm active / Xm total"
+  - Progress bar (green → yellow → red as limit approached)
+  - Usage percentage
+
+#### 2. Manually Refresh from Server
+
+**When to use:**
+- Just added a rule in admin dashboard
+- Want to get latest rules immediately (instead of waiting 5 min)
+
+**Steps:**
+1. Open extension options → Settings tab
+2. Click "🔄 Refresh from Server" button
+3. Wait for "Configuration refreshed" toast notification
+
+**Result**: Latest rules fetched and applied within seconds
+
+#### 3. Access Admin Dashboard
+
+**From Extension:**
+1. Open extension options → Settings tab
+2. Click "Manage Blocking Rules" button
+3. Admin dashboard opens in new tab
+
+**From Popup:**
+1. Click extension icon
+2. Click link to admin dashboard
+
+### When Site is Blocked
+
+**What happens:**
+1. Try to visit blocked site (e.g., chatgpt.com)
+2. Redirected to block page showing:
+   - Domain name
+   - Block reason (permanent / time limit / schedule)
+   - Usage stats (for time limits)
+   - Override request form (if enabled)
+
+**Request Override** (if enabled):
+1. Enter reason (optional but encouraged)
+2. Click "Grant [X] minute access"
+3. Site becomes accessible for configured duration
+4. Override logged to server for accountability
+
+**Checklist:**
+1. ✅ Check admin dashboard - is domain in blocked list?
+2. ✅ Check "Enable Blocking" toggle in admin dashboard
+3. ✅ Click "Refresh from Server" in extension options
+4. ✅ Wait 30 seconds after refresh for rules to apply
+5. ✅ Open new tab and try again (existing tabs may need reload)
+6. ✅ Check for active override (if enabled)
+
+**Debug:**
+- Open extension Service Worker DevTools (chrome://extensions → service worker)
+- Look for logs:
+  - `📋 Block config: { enabled: true, blockedDomains: [...] }`
+  - `🚫 Adding permanent block for: domain.com`
+  - `✅ Added N blocking rules for N domains`
+- If you see `⚠️ Blocking is DISABLED`, check admin dashboard toggle
+
+### Rules not syncing after admin dashboard changes
+
+**Cause**: Extension syncs every 5 minutes automatically
+
+**Solutions:**
+1. **Immediate sync**: Click "Refresh from Server" in extension options
+2. **Or wait**: Auto-sync runs every 5 minutes
+3. **Or re-login**: Logout/login triggers immediate sync
+
+**Check sync status:**
+- Service Worker console should show: "Block config fetched and cached"
+
+### Time limit not working
+
+**Checklist:**
+1. Domain must be in blocked list (with time limit set)
+2. Time limit is **"minutes per day"**, not total time
+3. Time limit allows access **until exceeded**, then blocks
+4. Extension tracks `foregroundTime` (active usage)
+5. Resets at midnight (browser local time)
+
+**Debug:**
+- Check today's usage in extension options
+- Compare against time limit
+- If usage < limit, domain should be accessible
+- If usage >= limit, domain should be blocked
+
+### Schedule not triggering
+
+**Checklist:**
+1. Schedule is enabled (check in admin dashboard)
+2. Current day is in schedule's "Days of Week"
+3. Current time is within sc (Server-Side Management)
+
+**Admin Dashboard:**
+- [ ] Login to http://localhost:3000/extension/blocking
+- [ ] Toggle "Enable Blocking" → verify extension receives update
+- [ ] Add domain to block list → verify appears in list
+- [ ] Set time limit on domain → verify limit shows in UI
+- [ ] Create schedule → verify appears in schedules page
+- [ ] Remove domain → verify removed from extension
+
+**Extension Sync:**
+- [ ] Add rule in dashboard → click "Refresh from Server" → verify rule applies within 30s
+- [ ] Wait 5 minutes → verify auto-sync fetches latest config
+- [ ] Check Service Worker console → verify sync logs appear
+- [ ] Verify "blockConfigLastFetch" timestamp updates
+
+**Blocking Enforcement:**
+- [ ] Add `example.com` to block list → try to visit → verify redirect to blocked page
+- [ ] Visit both `example.com` and `www.example.com` → verify both blocked
+- [ ] Set 5 min limit on `test.com` → use for 5+ min → verify blocks
+- [ ] Create schedule for current time → verify blocks immediately (within 5 min)
+
+**Time Limits:**
+- [ ] Add domain with 10 min limit
+- [ ] Use domain for 5 min → verify still accessible
+- [ ] Use domain for 10+ min → verify blocked
+- [ ] Check extension options → verify usage shows correct time/percentage
+- [ ] Wait until midnight → verify limit resets
+
+**Schedules:**
+- [ ] Create schedule for next hour → wait → verify blocks at start time
+- [ ] Create schedule with overnight range (22:00-06:00) → verify works
+- [ ] Disable schedule → verify unblocks
+- [ ] Add multiple domains to schedule → verify all blocked during time
+
+**Override System (if enabled):**
+- [ ] Get blocked → request override → verify temporary access granted
+- [ ] Wait for override expiration → verify re-blocks
+- [ ] Check server → verify override logged in database
+
+**Read-Only Extension:✅ **IMPLEMENTED**
+- ✅ Admin-defined block lists (server-managed)
+- ✅ Central management dashboard (Next.js admin panel)
+- ✅ Server as single source of truth
+- ✅ Read-only extension enforcement
+- ✅ Block attempt logging for compliance
+- 🔄 Multi-user support (per-user configs)
+- 📋 Compliance reporting (partially - logs available)d (up to 5 min)
+
+### Override not expiring
+
+**Checklist:**
+1. Check browser time is correct
+2. Overrides auto-expire when duration ends
+3. Page may need reload to re-block
+4. Check override duration in admin dashboard settings
+
+**Manual revoke:**
+- Use admin dashboard (if override management implemented)
+- Or clear extension storage
+
+### Changes in admin dashboard not reflected in extension
+
+**Cause**: Cache or sync delay
+
+**Solution:**
+1. Click "Refresh from Server" in extension options
+2. Check "blockConfigLastFetch" timestamp in storage
+3. Max cache age is 10 minutes
+4. Auto-sync alarm runs every 5 minutes
+
+### "Could not notify background" error in console
+
+**Cause**: Service worker not ready when config fetched
+
+**Impact**: None - this is informational only
+**Fix**: Service worker will update rules on next alarm (within 5 min)
+
+### Extension shows old rules after dashboard changes
+
+**Solution:**
+1. Force refresh: Click "Refresh from Server"
+2. Or reload extension: chrome://extensions → Reload
+3. Or re-login to extension
+
+### Database / Server Errors
+
+**Symptom**: "Failed to get session" or "Failed to fetch config"
+**Causes:**
+- Not logged in to extension
+- Server not running (check `bun dev`)
+- Database connection issue (check Turso connection)
+- CORS issue (check API_BASE_URL in blockConfigSync.ts)
+
+**Solution:**
+1. Ensure server running at http://localhost:3000
+2. Login to extension via Options page
+3. Check server logs for errors
+4. Verify database migration ran (`bun db:push`)
 - `logBlockAttempt(attempt: BlockAttempt): Promise<void>` - Log block attempt
 - `getBlockAttempts(limit?: number): Promise<BlockAttempt[]>` - Get attempt history
 
@@ -354,20 +717,48 @@ src/
 3. Fill in form:
    - **Name**: "Work Hours"
    - **Start Time**: 09:00
-   - **End Time**: 17:00
-   - **Days**: Mon, Tue, Wed, Thu, Fri
-   - **Domains**: Select facebook.com, twitter.com, etc.
-4. Click "Add Schedule"
+   - **End Time* & Flow
+- **Server**: All blocking config stored in SQLite database (per-user)
+- **Extension**: Read-only cache in `chrome.storage.local` (synced every 5 min)
+- **Authentication**: Cookie-based sessions (Better Auth)
+- **Block attempts**: Logged to server for compliance and accountability
 
-**Schedule Features:**
-- Can have multiple schedules
-- Enable/disable schedules individually
-- Supports overnight ranges (e.g., 22:00 - 06:00)
+### Extension Security
+- Extension cannot modify its own blocking rules (read-only)
+- All config changes require server authentication
+- No localStorage or local write operations for config
+- Config cache has 10-minute max age (forces refresh)
 
-### 4. Request Override
+### Bypass Prevention
+- Uses declarativeNetRequest API (enforced by browser engine)
+- Rules applied at network level before page loads
+- Cannot be bypassed by:
+  - Page scripts / JavaScript
+  - DevTools manipulation
+  - Content script injection
+  - Extension console commands (writes disabled)
+- Two rules per domain (covers both with/without subdomain)
 
-**When blocked:**
-1. Try to visit blocked site
+### Admin Access Control
+- Only authenticated users can access admin dashboard
+- Session-based authentication (cookie-only, no tokens in extension)
+- tRPC procedures are protected (require auth)
+- REST endpoints validate session before serving config
+
+### Override Logging & Accountability
+- All overrides logged to server with:
+  - Domain
+  - Timestamp
+  - Reason (user-provided)
+  - User ID
+- Cannot be deleted from extension (server-side only)
+- Provides audit trail for compliance
+
+### Privacy
+- Each user has separate blocking configuration
+- Block attempts not shared between users
+- Server access requires authentication
+- No telemetry or analytics sent to external servic
 2. See blocked page with override option
 3. Enter reason (optional)
 4. Click "Grant [X] minute access"
