@@ -15,6 +15,7 @@ export async function initializeStorage(): Promise<void> {
         activeTabId: null,
         activeDomain: null,
         sessionStartTime: null,
+        lastUpdateTime: null,
         isIdle: false,
         windowFocused: true,
         currentDayDate: getCurrentDateString(),
@@ -23,6 +24,7 @@ export async function initializeStorage(): Promise<void> {
         date: getCurrentDateString(),
         domains: {},
         totalTime: 0,
+        chromeActiveTime: 0,
         idleTime: 0,
         sessionCount: 0,
       },
@@ -61,6 +63,7 @@ export async function getTodayActivity(): Promise<{
   date: string;
   domains: Record<string, DomainActivity>;
   totalTime: number;
+  chromeActiveTime: number;
   idleTime: number;
   sessionCount: number;
 }> {
@@ -107,7 +110,24 @@ export async function updateDomainActivity(
   // Update total time and last visit
   today.domains[domain].totalTime += timeToAdd;
   today.domains[domain].lastVisit = new Date().toISOString();
-  today.totalTime += timeToAdd;
+  
+  await chrome.storage.local.set({ todayActivity: today });
+}
+
+/**
+ * Increment Chrome active time (wall-clock, not per-domain)
+ */
+export async function incrementChromeActiveTime(seconds: number): Promise<void> {
+  const today = await getTodayActivity();
+  const currentDate = getCurrentDateString();
+  
+  if (today.date !== currentDate) {
+    await rolloverToNewDay();
+    return incrementChromeActiveTime(seconds);
+  }
+  
+  today.totalTime += seconds;
+  today.chromeActiveTime += seconds;
   
   await chrome.storage.local.set({ todayActivity: today });
 }
@@ -190,6 +210,7 @@ export async function rolloverToNewDay(): Promise<void> {
     date: getCurrentDateString(),
     domains: {},
     totalTime: 0,
+    chromeActiveTime: 0,
     idleTime: 0,
     sessionCount: 0,
   };

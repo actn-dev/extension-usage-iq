@@ -22,6 +22,13 @@ interface ActivityRecord {
 	backgroundTime: number;
 	visitCount: number;
 	lastVisit: string;
+	// Device identification
+	deviceId: string;
+	deviceName?: string;
+	browserName?: string;
+	browserVersion?: string;
+	osName?: string;
+	osVersion?: string;
 }
 
 export class ApiClient {

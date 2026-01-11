@@ -6,6 +6,7 @@
 import { getTodayActivity, getDailySummaries } from './storage';
 import { getApiClient } from './apiClient';
 import { getAuthManager } from './authManager';
+import { getDeviceInfo } from './deviceManager';
 // import type { DomainActivity } from '../types';
 
 interface SyncResult {
@@ -152,7 +153,16 @@ export class SyncManager {
 			backgroundTime: number;
 			visitCount: number;
 			lastVisit: string;
+			deviceId: string;
+			deviceName?: string;
+			browserName?: string;
+			browserVersion?: string;
+			osName?: string;
+			osVersion?: string;
 		}> = [];
+
+		// Get device info once
+		const deviceInfo = await getDeviceInfo();
 
 		// Get today's activity
 		const todayActivity = await getTodayActivity();
@@ -166,6 +176,13 @@ export class SyncManager {
 					backgroundTime: activity.backgroundTime || 0,
 					visitCount: activity.visitCount,
 					lastVisit: activity.lastVisit,
+					// Device info
+					deviceId: deviceInfo.deviceId,
+					deviceName: deviceInfo.deviceName,
+					browserName: deviceInfo.browserName,
+					browserVersion: deviceInfo.browserVersion,
+					osName: deviceInfo.osName,
+					osVersion: deviceInfo.osVersion,
 				});
 			}
 		}
@@ -193,6 +210,13 @@ export class SyncManager {
 						backgroundTime: 0,
 						visitCount: 1, // Estimated
 						lastVisit: new Date(date).toISOString(),
+						// Device info
+						deviceId: deviceInfo.deviceId,
+						deviceName: deviceInfo.deviceName,
+						browserName: deviceInfo.browserName,
+						browserVersion: deviceInfo.browserVersion,
+						osName: deviceInfo.osName,
+						osVersion: deviceInfo.osVersion,
 					});
 				}
 			}

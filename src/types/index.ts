@@ -46,6 +46,7 @@ export interface SessionState {
   activeTabId: number | null;
   activeDomain: string | null;
   sessionStartTime: number | null; // Timestamp in ms
+  lastUpdateTime: number | null; // Last time tracking update (ms) - persisted
   isIdle: boolean;
   windowFocused: boolean;
   currentDayDate: string; // YYYY-MM-DD
@@ -62,7 +63,8 @@ export interface StorageData {
   todayActivity: {
     date: string;
     domains: Record<string, DomainActivity>;
-    totalTime: number;
+    totalTime: number; // Wall-clock Chrome active time (not sum of domains)
+    chromeActiveTime: number; // Same as totalTime (for clarity)
     idleTime: number;
     sessionCount: number;
   };

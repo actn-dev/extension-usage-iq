@@ -1,11 +1,7 @@
-// Time tracking engine
+// Time tracking engine with 1-minute alarms for low CPU overhead
 
-import { getSessionState, updateSessionState, updateDomainActivity, addIdleTime } from './storage';
+import { getSessionState, updateSessionState, updateDomainActivity, addIdleTime, incrementChromeActiveTime } from './storage';
 import { extractDomain, shouldTrackUrl } from '../types';
-import { getAllOpenDomains, getTabDomain } from './tabTracker';
-
-let trackingInterval: number | null = null;
-let lastUpdateTime: number = Date.now();
 
 /**
  * Start tracking time for the current active tab
@@ -18,23 +14,19 @@ export async function startTracking(tabId: number, url: string): Promise<void> {
     return;
   }
   
-  // Stop any existing tracking
-  await stopTracking();
+  // Accumulate any time from previous tab before switching
+  await accumulateTime();
   
-  // Update session state
+  const now = Date.now();
+  
+  // Update session state with new active tab
   await updateSessionState({
     activeTabId: tabId,
     activeDomain: domain,
-    sessionStartTime: Date.now(),
+    sessionStartTime: now,
+    lastUpdateTime: now,
     isIdle: false,
   });
-  
-  lastUpdateTime = Date.now();
-  
-  // Start interval to accumulate time every second
-  trackingInterval = setInterval(async () => {
-    await accumulateTime();
-  }, 1000) as unknown as number;
   
   console.log(`Started tracking: ${domain} (tab ${tabId})`);
 }
@@ -43,11 +35,6 @@ export async function startTracking(tabId: number, url: string): Promise<void> {
  * Stop tracking the current active tab
  */
 export async function stopTracking(): Promise<void> {
-  if (trackingInterval !== null) {
-    clearInterval(trackingInterval);
-    trackingInterval = null;
-  }
-  
   // Accumulate any remaining time
   await accumulateTime();
   
@@ -60,6 +47,7 @@ export async function stopTracking(): Promise<void> {
     activeTabId: null,
     activeDomain: null,
     sessionStartTime: null,
+    lastUpdateTime: null,
   });
 }
 
@@ -69,12 +57,6 @@ export async function stopTracking(): Promise<void> {
 export async function pauseTracking(reason: 'idle' | 'windowBlur'): Promise<void> {
   // Accumulate time up to this point
   await accumulateTime();
-  
-  // Stop the interval but don't clear session state
-  if (trackingInterval !== null) {
-    clearInterval(trackingInterval);
-    trackingInterval = null;
-  }
   
   const state = await getSessionState();
   console.log(`Paused tracking (${reason}): ${state.activeDomain}`);
@@ -90,33 +72,25 @@ export async function pauseTracking(reason: 'idle' | 'windowBlur'): Promise<void
  * Resume tracking (when window regains focus or user becomes active)
  */
 export async function resumeTracking(reason: 'active' | 'windowFocus'): Promise<void> {
-  const state = await getSessionState();
+  const now = Date.now();
   
   if (reason === 'active') {
-    await updateSessionState({ isIdle: false });
+    await updateSessionState({ isIdle: false, lastUpdateTime: now });
   } else {
-    await updateSessionState({ windowFocused: true });
+    await updateSessionState({ windowFocused: true, lastUpdateTime: now });
   }
   
-  // Only restart tracking if we have an active tab and window is focused and not idle
   const updatedState = await getSessionState();
   if (updatedState.activeTabId && updatedState.windowFocused && !updatedState.isIdle) {
-    lastUpdateTime = Date.now();
-    
-    if (trackingInterval === null) {
-      trackingInterval = setInterval(async () => {
-        await accumulateTime();
-      }, 1000) as unknown as number;
-    }
-    
     console.log(`Resumed tracking (${reason}): ${updatedState.activeDomain}`);
   }
 }
 
 /**
  * Accumulate time for the currently active domain and all background domains
+ * Called by 1-minute alarm and on tab events
  */
-async function accumulateTime(): Promise<void> {
+export async function accumulateTime(): Promise<void> {
   const state = await getSessionState();
   
   // Don't accumulate if idle or window not focused
@@ -124,34 +98,61 @@ async function accumulateTime(): Promise<void> {
     return;
   }
   
-  const now = Date.now();
-  const elapsed = Math.floor((now - lastUpdateTime) / 1000); // Convert to seconds
-  
-  if (elapsed > 0) {
-    // Get the active domain
-    const activeDomain = state.activeDomain;
-    
-    // Get all open domains
-    const allOpenDomains = getAllOpenDomains();
-    
-    // Update all domains
-    const updates: Promise<void>[] = [];
-    
-    allOpenDomains.forEach(domain => {
-      if (domain === activeDomain) {
-        // Active tab: update foreground time
-        updates.push(updateDomainActivity(domain, elapsed, true));
-      } else {
-        // Background tab: update background time
-        updates.push(updateDomainActivity(domain, elapsed, false));
-      }
-    });
-    
-    // Execute all updates in parallel for efficiency
-    await Promise.all(updates);
-    
-    lastUpdateTime = now;
+  // No previous update time = first tracking, skip accumulation
+  if (state.lastUpdateTime === null) {
+    return;
   }
+  
+  const now = Date.now();
+  const elapsed = Math.floor((now - state.lastUpdateTime) / 1000); // Convert to seconds
+  
+  // Skip if less than 1 second elapsed (shouldn't happen with 1-min alarm)
+  if (elapsed < 1) {
+    return;
+  }
+  
+  // Cap at 2 minutes to prevent huge gaps if service worker was down
+  const cappedElapsed = Math.min(elapsed, 120);
+  
+  console.log(`Accumulating ${cappedElapsed}s (elapsed: ${elapsed}s)`);
+  
+  // Track total Chrome active time (wall-clock, once per interval)
+  await incrementChromeActiveTime(cappedElapsed);
+  
+  // Get the active domain
+  const activeDomain = state.activeDomain;
+  
+  // Query all currently open tabs (on-demand, no in-memory tracking)
+  const allTabs = await chrome.tabs.query({});
+  const openDomains = new Set<string>();
+  
+  for (const tab of allTabs) {
+    if (tab.url && shouldTrackUrl(tab.url)) {
+      const domain = extractDomain(tab.url);
+      if (domain) {
+        openDomains.add(domain);
+      }
+    }
+  }
+  
+  // Update all domains
+  const updates: Promise<void>[] = [];
+  
+  openDomains.forEach(domain => {
+    if (domain === activeDomain) {
+      // Active tab: update foreground time
+      updates.push(updateDomainActivity(domain, cappedElapsed, true));
+    } else {
+      // Background tab: update background time
+      updates.push(updateDomainActivity(domain, cappedElapsed, false));
+    }
+  });
+  
+  // Execute all updates in parallel for efficiency
+  await Promise.all(updates);
+  
+  // Update lastUpdateTime in storage
+  await updateSessionState({ lastUpdateTime: now });
 }
 
 /**

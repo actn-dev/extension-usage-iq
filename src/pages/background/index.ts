@@ -10,6 +10,7 @@ import { getDomainMinutesUsedToday, getBlockConfig } from '../../utils/blockStor
 import { getSyncManager } from '../../utils/syncManager';
 import { getAuthManager } from '../../utils/authManager';
 import { getBlockConfigSync } from '../../utils/blockConfigSync';
+import { getDeviceInfo, setDeviceName } from '../../utils/deviceManager';
 
 console.log('UsageIQ background service worker loaded');
 
@@ -54,6 +55,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Set up frequent schedule checks (every 5 minutes)
   chrome.alarms.create('checkSchedules', {
     periodInMinutes: 5,
+  });
+  
+  // Set up 1-minute time tracking alarm (low CPU overhead)
+  chrome.alarms.create('trackTime', {
+    periodInMinutes: 1,
   });
   
   console.log('UsageIQ initialized successfully');
@@ -192,6 +198,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     // Sync pending block attempts to server
     const blockConfigSync = getBlockConfigSync();
     await blockConfigSync.syncBlockAttempts();
+  } else if (alarm.name === 'trackTime') {
+    // Accumulate time every minute (low CPU overhead)
+    const { accumulateTime } = await import('../../utils/timeTracker');
+    await accumulateTime();
   }
 });
 
@@ -241,6 +251,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
     }).catch(error => {
       console.error('Error updating blocking rules:', error);
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+  
+  if (message.type === 'GET_DEVICE_INFO') {
+    getDeviceInfo().then((deviceInfo) => {
+      sendResponse(deviceInfo);
+    }).catch(error => {
+      console.error('Error getting device info:', error);
+      sendResponse({ error: error.message });
+    });
+    return true;
+  }
+  
+  if (message.type === 'SET_DEVICE_NAME') {
+    setDeviceName(message.deviceName).then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      console.error('Error setting device name:', error);
       sendResponse({ success: false, error: error.message });
     });
     return true;
