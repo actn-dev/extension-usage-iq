@@ -5,7 +5,7 @@ import { getTodayActivity } from "@src/utils/storage";
 import { toast } from "@src/utils/toast";
 import { useEffect, useState } from "react";
 
-export function SettingsTab({ storageInfo, onExport }: { storageInfo: any; onExport: () => void }) {
+export function SettingsTab({ storageInfo, onExport, onClear }: { storageInfo: any; onExport: () => void; onClear: () => void }) {
   const [blockConfig, setBlockConfig] = useState<BlockConfig | null>(null);
   const [todayActivity, setTodayActivity] = useState<Record<string, DomainActivity>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -274,16 +274,24 @@ export function SettingsTab({ storageInfo, onExport }: { storageInfo: any; onExp
 
       {/* Export Data */}
       <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Export Data</h2>
+        <h2 className="text-xl font-semibold mb-4">Data Management</h2>
         <p className="text-gray-400 mb-4 text-sm">
-          Download your browsing activity data as JSON for backup or analysis.
+          Download your browsing activity data as JSON for backup or analysis, or clear all tracking data.
         </p>
-        <button
-          onClick={onExport}
-          className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-        >
-          Export Data
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={onExport}
+            className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+          >
+            📥 Export Data
+          </button>
+          <button
+            onClick={onClear}
+            className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+          >
+            🗑️ Clear All Data
+          </button>
+        </div>
       </div>
 
       {/* About */}

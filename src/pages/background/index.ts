@@ -5,6 +5,7 @@ import { initializeStorage, getSessionState, updateSessionState, incrementVisitC
 import { startTracking, stopTracking, pauseTracking, resumeTracking, handleIdleStateChange } from '../../utils/timeTracker';
 import { extractDomain, shouldTrackUrl, getCurrentDateString } from '../../types';
 import { initializeTabTracker, addTab, removeTab, updateTab } from '../../utils/tabTracker';
+import { startBrowserSession, endBrowserSession, resumeSessionIfExists } from '../../utils/sessionManager';
 import { initializeBlocking, updateBlockingRules } from '../../utils/blockManager';
 import { getDomainMinutesUsedToday, getBlockConfig } from '../../utils/blockStorage';
 import { getSyncManager } from '../../utils/syncManager';
@@ -20,6 +21,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
   // Initialize storage
   await initializeStorage();
+  
+  // Start or resume browser session
+  await startBrowserSession();
   
   // Initialize tab tracker with all open tabs
   await initializeTabTracker();
@@ -65,10 +69,27 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('UsageIQ initialized successfully');
 });
 
+// Handle window close - end session if last window is closed
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  try {
+    const allWindows = await chrome.windows.getAll();
+    if (allWindows.length === 0) {
+      // Last Chrome window closed, end the session
+      console.log('Last Chrome window closed, ending session');
+      await endBrowserSession();
+    }
+  } catch (error) {
+    console.error('Error handling window close:', error);
+  }
+});
+
 // Handle extension startup (browser restart)
 chrome.runtime.onStartup.addListener(async () => {
   console.log('Browser started, resuming UsageIQ monitoring');
   await initializeStorage();
+  
+  // Resume or start new browser session
+  await resumeSessionIfExists();
   
   // Initialize tab tracker with all open tabs
   await initializeTabTracker();
@@ -221,6 +242,7 @@ function getNextMidnight(): number {
 self.addEventListener('beforeunload', async () => {
   console.log('Service worker shutting down, saving state');
   await stopTracking();
+  await endBrowserSession();
 });
 
 // Listen for messages from popup/options

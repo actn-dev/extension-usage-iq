@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Login } from "../login";
+import { SyncStatus } from "./sync-status";
 
 interface DeviceInfo {
   deviceId: string;
@@ -209,71 +210,7 @@ export function AccountTab() {
       )}
 
       {/* Sync Status Section */}
-      <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Data Synchronization</h2>
-        
-        <div className="space-y-4">
-          <div className="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
-            <div className="flex-1">
-              <p className="font-medium">Last Sync</p>
-              <p className="text-sm text-gray-400">
-                {formatLastSync(syncStatus.lastSync)}
-              </p>
-              {syncStatus.pendingRecords > 0 && (
-                <p className="text-xs text-blue-400 mt-1">
-                  {syncStatus.pendingRecords} records pending
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {syncStatus.syncing && (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
-              )}
-              <span className={`px-3 py-1 rounded text-xs font-medium ${
-                syncStatus.error 
-                  ? 'bg-red-600/20 text-red-400'
-                  : syncStatus.syncing
-                  ? 'bg-blue-600/20 text-blue-400'
-                  : 'bg-green-600/20 text-green-400'
-              }`}>
-                {syncStatus.error ? 'Failed' : syncStatus.syncing ? 'Syncing...' : 'Synced'}
-              </span>
-            </div>
-          </div>
-
-          {syncStatus.error && (
-            <div className="p-4 bg-red-600/10 border border-red-600/30 rounded-lg">
-              <p className="text-sm text-red-400">
-                <span className="font-medium">Sync Error:</span> {syncStatus.error}
-              </p>
-            </div>
-          )}
-
-          <button
-            onClick={handleManualSync}
-            disabled={syncStatus.syncing}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-          >
-            {syncStatus.syncing ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                Syncing...
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Sync Now
-              </>
-            )}
-          </button>
-
-          <p className="text-xs text-gray-400 text-center">
-            Automatic sync runs every hour when signed in
-          </p>
-        </div>
-      </div>
+      <SyncStatus onSyncClick={handleManualSync} />
 
       {/* Sync Settings */}
       <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">

@@ -10,9 +10,11 @@ A Chrome extension that tracks and analyzes browsing activity with detailed time
 - **Foreground vs Background time tracking**:
   - Foreground time: When tab is actively viewed/focused
   - Background time: When tab is open but not active
-  - Efficient single-timer approach with in-memory tab tracking
+  - **Total time**: Wall-clock Chrome active time (not sum of all tabs)
+  - 1-minute alarm-based tracking for minimal CPU overhead
 - Detects idle time (5-minute threshold)
 - Handles multi-window and focus changes
+- Pauses automatically when switching to other applications (VSCode, etc.)
 
 ✅ **Data Management**
 - Local storage using Chrome Storage API
@@ -84,44 +86,49 @@ src/
 ### Background Service Worker
 The core monitoring engine runs as a Manifest V3 service worker:
 
-- **Event Listeners**:
-  - `chrome.tabs.onActivated`: Tab switches
-  - `chrome.tabs.onUpdated`: URL changes
-  - `chrome.tabs.onRemoved`: Tab closures
-  - `chrome.windows.onFocusChanged`: Window focus
-  - Single 1-second interval for all tracking (minimal CPU)
-  - Foreground: Active tab gets foreground time
-  - Background: All other open tabs get background time
-  - In-memory Map tracks all open tabs efficiently
-  - Pauses when idle or window loses focus
-  - Persists state across browser restarts
+- **Time Tracking**:
+  - 1-minute Chrome alarms for tracking (minimal CPU, ~0.01%)
+  - Accumulates time on each alarm trigger + on tab events
+  - Persists `lastUpdateTime` in storage (survives service worker restarts)
+  - Calculates elapsed time on wake-up to handle service worker sleep
+  - Caps at 2 minutes to prevent huge gaps if worker was down
 
-- **Tab Tracking**:
-  - Event-driven in-memory Map (no polling)
-  - Initializes on extension startup/install
-  - Updates via tab events only
-  - Efficient domain grouping
-  - Updates every second for active tab
-  - Pauses when idle or window loses focus
-  - Persists state across browser restarts
+- **Total Time Calculation**:
+  - Wall-clock Chrome active time (counted once per interval)
+  - NOT sum of all open tabs (prevents inflation)
+  - Pauses when Chrome window loses focus or user is idle
+  - Example: 5 tabs open for 1 minute = 1 minute total (not 5 minutes)
+
+- **Per-Domain Time Tracking**:
+  - Foreground: Time actively viewing tab
+  - Background: Time tab was open while other tabs were active
+  - Queries all open tabs on-demand (no in-memory tracking needed)
+  - Domain total = foreground + background time
+
+- **Event Listeners**:
+  - `chrome.tabs.onActivated`: Tab switches → immediate time accumulation + new tab tracking
+  - `chrome.tabs.onUpdated`: URL changes → immediate accumulation
+  - `chrome.tabs.onRemoved`: Tab closures → immediate accumulation
+  - `chrome.windows.onFocusChanged`: Window focus changes → pause/resume tracking
+  - `chrome.idle.onStateChanged`: Idle detection → pause tracking
+  - `chrome.alarms.onAlarm`: 1-minute timer → periodic time accumulation
 
 - **Data Management**:
   - Stores activity in chrome.storage.local
-  - Runs daily rollover a   // seconds (foreground + background)
-  foregroundTime: number;   // seconds when tab was active/focused
-  backgroundTime: number;   // seconds when tab was open but not active
-  visitCount: number;
-  lastVisit: string;        // ISO timestamp
-  date: string;   
+  - Runs daily rollover at midnight
+  - 30-day historical data retention
+  - Persists session state across browser restarts   
 
 **DomainActivity**:
 ```typescript
 {
   domain: string;
-  totalTime: number;     // seconds
+  totalTime: number;        // seconds (foreground + background for this domain)
+  foregroundTime: number;   // seconds when tab was active/focused
+  backgroundTime: number;   // seconds when tab was open but not active
   visitCount: number;
-  lastVisit: string;     // ISO timestamp
-  date: string;          // YYYY-MM-DD
+  lastVisit: string;        // ISO timestamp
+  date: string;             // YYYY-MM-DD
 }
 ```
 
@@ -129,8 +136,8 @@ The core monitoring engine runs as a Manifest V3 service worker:
 ```typescript
 {
   date: string;
-  totalChromeTime: number;
-  activeTime: number;
+  totalChromeTime: number;  // Wall-clock Chrome active time (not sum of domains)
+  activeTime: number;       // Chrome time minus idle time
   idleTime: number;
   topDomains: Array<{ domain: string; time: number }>;
   sessionCount: number;
@@ -145,13 +152,16 @@ The core monitoring engine runs as a Manifest V3 service worker:
     activeTabId: number | null;
     activeDomain: string | null;
     sessionStartTime: number | null;
+    lastUpdateTime: number | null;        // Last tracking update (persisted for service worker restarts)
     isIdle: boolean;
     windowFocused: boolean;
+    currentDayDate: string;
   },
   todayActivity: {
     date: string;
     domains: Record<string, DomainActivity>;
-    totalTime: number;
+    totalTime: number;                   // Wall-clock Chrome active time
+    chromeActiveTime: number;            // Same as totalTime (for clarity)
     idleTime: number;
     sessionCount: number;
   },
@@ -244,20 +254,28 @@ Required Chrome permissions:
 - **Excludes**: `chrome://`, `chrome-extension://`, `about:` pages
 - **Incognito mode**: Not monitored (Chrome restriction)
 
-## Performance (including in-memory tab tracker)
-- **CPU usage**: <1% (steady state, even with 50+ tabs)
+## Performance
+- **CPU usage**: ~0.01% (1-minute alarms, event-driven tracking)
 - **Storage**: ~100-500 KB for 30 days of data
-- **Update frequency**: 1-second intervals for all tracking
-- **Background tracking overhead**: Minimal (pure memory operations)
+- **Update frequency**: 1-minute alarms + on-demand tab queries
+- **Tab tracking**: Query-based (no in-memory overhead)
+- **Service worker lifetime**: Survives termination (persisted lastUpdateTime)
 - **UI refresh**: 2-5 seconds for dashboard updates
-- **Tab tracking**: Event-driven (no polling overhead)
-- **Update frequency**: 1-second intervals for active tracking
-- **UI refresh**: 2-5 seconds for dashboard updates
+- **Accuracy**: ±60 seconds max error (1-minute granularity)
 
 ## Known Limitations
 
 1. Cannot track incognito mode (Chrome restriction)
 ## Recent Updates
+
+### Version 1.2.0 (January 11, 2026)
+- ✅ Implemented 1-minute alarm-based time tracking (minimal CPU)
+- ✅ Fixed total time calculation (wall-clock, not sum of tabs)
+- ✅ Persisted lastUpdateTime in storage for service worker restarts
+- ✅ On-demand tab queries (removed in-memory tracker)
+- ✅ Per-domain foreground/background time tracking (accurate)
+- ✅ Capped elapsed time at 2 minutes (handles long service worker sleeps)
+- ✅ Time pauses when switching to other applications (window blur)
 
 ### Version 1.1.0 (January 9, 2026)
 - ✅ Added foreground vs background time tracking
@@ -304,6 +322,15 @@ MIT License - S1.0
 
 ## Changelog
 
+### v1.2.0 - January 11, 2026
+- Replaced setInterval with 1-minute Chrome alarms for minimal CPU
+- Fixed total time calculation (wall-clock Chrome active time, not sum of tabs)
+- Persisted lastUpdateTime in storage to survive service worker restarts
+- Switched from in-memory tab tracking to on-demand Chrome API queries
+- Per-domain time properly split between foreground/background
+- Added 2-minute cap on elapsed time (handles long service worker sleeps)
+- Time tracking pauses when Chrome loses window focus (e.g., switching to VSCode)
+
 ### v1.1.0 - January 9, 2026
 - Added foreground/background time tracking
 - Implemented in-memory tab tracker for efficiency
@@ -331,5 +358,5 @@ Built with:
 
 ---
 
-**Version**: 1.0.0  
-**Last Updated**: January 8, 2026
+**Version**: 1.2.0  
+**Last Updated**: January 11, 2026

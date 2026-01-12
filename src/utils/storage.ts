@@ -16,15 +16,22 @@ export async function initializeStorage(): Promise<void> {
         activeDomain: null,
         sessionStartTime: null,
         lastUpdateTime: null,
+        lastStateChangeTime: null,
         isIdle: false,
         windowFocused: true,
         currentDayDate: getCurrentDateString(),
+        currentSessionId: null,
       },
+      currentSession: null,
+      sessions: {},
+      sessionDomains: {},
       todayActivity: {
         date: getCurrentDateString(),
         domains: {},
         totalTime: 0,
         chromeActiveTime: 0,
+        chromeFocusedTime: 0,
+        chromeUnfocusedTime: 0,
         idleTime: 0,
         sessionCount: 0,
       },
@@ -35,6 +42,27 @@ export async function initializeStorage(): Promise<void> {
     await chrome.storage.local.set(initialData);
     console.log('Storage initialized with default values');
   } else {
+    // Migration: Add sync fields to existing sessions
+    const sessions = data.sessions || {};
+    let needsMigration = false;
+    
+    for (const sessionId in sessions) {
+      const session = sessions[sessionId];
+      if (session.syncedAt === undefined) {
+        session.syncedAt = null;
+        session.lastSyncCheckpoint = null;
+        session.focusedTimeAtLastSync = 0;
+        session.unfocusedTimeAtLastSync = 0;
+        session.idleTimeAtLastSync = 0;
+        needsMigration = true;
+      }
+    }
+    
+    if (needsMigration) {
+      await chrome.storage.local.set({ sessions });
+      console.log('Migrated existing sessions with sync fields');
+    }
+    
     console.log('Storage already initialized');
   }
 }
@@ -64,6 +92,8 @@ export async function getTodayActivity(): Promise<{
   domains: Record<string, DomainActivity>;
   totalTime: number;
   chromeActiveTime: number;
+  chromeFocusedTime: number;
+  chromeUnfocusedTime: number;
   idleTime: number;
   sessionCount: number;
 }> {
@@ -72,46 +102,82 @@ export async function getTodayActivity(): Promise<{
 }
 
 /**
- * Update domain activity for today
+ * Update domain activity for current session (per-session storage)
  */
 export async function updateDomainActivity(
   domain: string,
   timeToAdd: number,
-  isForeground: boolean = true
+  isForeground: boolean = true,
+  isAudible: boolean = false
 ): Promise<void> {
   const today = await getTodayActivity();
   const currentDate = getCurrentDateString();
+  const state = await getSessionState();
+  const sessionId = state.currentSessionId || 'unknown';
   
   // Check if day changed - if so, roll over to new day
   if (today.date !== currentDate) {
     await rolloverToNewDay();
-    return updateDomainActivity(domain, timeToAdd, isForeground);
+    return updateDomainActivity(domain, timeToAdd, isForeground, isAudible);
   }
   
-  if (!today.domains[domain]) {
-    today.domains[domain] = {
+  // Get or create sessionDomains storage
+  const result = await chrome.storage.local.get('sessionDomains');
+  const sessionDomains: Record<string, Record<string, DomainActivity>> = result.sessionDomains || {};
+  
+  // Initialize session if not exists
+  if (!sessionDomains[sessionId]) {
+    sessionDomains[sessionId] = {};
+  }
+  
+  // Initialize domain for this session if not exists
+  if (!sessionDomains[sessionId]![domain]) {
+    sessionDomains[sessionId]![domain] = {
       domain,
       totalTime: 0,
       foregroundTime: 0,
       backgroundTime: 0,
+      audibleTime: 0,
       visitCount: 1,
       lastVisit: new Date().toISOString(),
       date: currentDate,
+      sessionId,
     };
   }
   
-  // Update the appropriate time counter
+  // Update the appropriate time counter for THIS SESSION ONLY
   if (isForeground) {
-    today.domains[domain].foregroundTime += timeToAdd;
+    sessionDomains[sessionId]![domain]!.foregroundTime += timeToAdd;
   } else {
-    today.domains[domain].backgroundTime += timeToAdd;
+    sessionDomains[sessionId]![domain]!.backgroundTime += timeToAdd;
+  }
+  
+  if (isAudible) {
+    sessionDomains[sessionId]![domain]!.audibleTime += timeToAdd;
   }
   
   // Update total time and last visit
-  today.domains[domain].totalTime += timeToAdd;
-  today.domains[domain].lastVisit = new Date().toISOString();
+  sessionDomains[sessionId]![domain]!.totalTime += timeToAdd;
+  sessionDomains[sessionId]![domain]!.lastVisit = new Date().toISOString();
   
-  await chrome.storage.local.set({ todayActivity: today });
+  await chrome.storage.local.set({ sessionDomains });
+}
+
+/**
+ * Get domain activity for a specific session
+ */
+export async function getSessionDomains(sessionId: string): Promise<Record<string, DomainActivity>> {
+  const result = await chrome.storage.local.get('sessionDomains');
+  const sessionDomains: Record<string, Record<string, DomainActivity>> = result.sessionDomains || {};
+  return sessionDomains[sessionId] || {};
+}
+
+/**
+ * Get all session domains (all sessions)
+ */
+export async function getAllSessionDomains(): Promise<Record<string, Record<string, DomainActivity>>> {
+  const result = await chrome.storage.local.get('sessionDomains');
+  return result.sessionDomains || {};
 }
 
 /**
@@ -133,11 +199,46 @@ export async function incrementChromeActiveTime(seconds: number): Promise<void> 
 }
 
 /**
+ * Increment Chrome focused time (when Chrome window is active)
+ */
+export async function incrementChromeFocusedTime(seconds: number): Promise<void> {
+  const today = await getTodayActivity();
+  const currentDate = getCurrentDateString();
+  
+  if (today.date !== currentDate) {
+    await rolloverToNewDay();
+    return incrementChromeFocusedTime(seconds);
+  }
+  
+  today.chromeFocusedTime += seconds;
+  
+  await chrome.storage.local.set({ todayActivity: today });
+}
+
+/**
+ * Increment Chrome unfocused time (Chrome open but other app active)
+ */
+export async function incrementChromeUnfocusedTime(seconds: number): Promise<void> {
+  const today = await getTodayActivity();
+  const currentDate = getCurrentDateString();
+  
+  if (today.date !== currentDate) {
+    await rolloverToNewDay();
+    return incrementChromeUnfocusedTime(seconds);
+  }
+  
+  today.chromeUnfocusedTime += seconds;
+  
+  await chrome.storage.local.set({ todayActivity: today });
+}
+
+/**
  * Increment visit count for a domain
  */
 export async function incrementVisitCount(domain: string): Promise<void> {
   const today = await getTodayActivity();
   const currentDate = getCurrentDateString();
+  const state = await getSessionState();
   
   if (today.date !== currentDate) {
     await rolloverToNewDay();
@@ -150,9 +251,11 @@ export async function incrementVisitCount(domain: string): Promise<void> {
       totalTime: 0,
       foregroundTime: 0,
       backgroundTime: 0,
+      audibleTime: 0,
       visitCount: 0,
       lastVisit: new Date().toISOString(),
       date: currentDate,
+      sessionId: state.currentSessionId || 'unknown',
     };
   }
   
@@ -211,6 +314,8 @@ export async function rolloverToNewDay(): Promise<void> {
     domains: {},
     totalTime: 0,
     chromeActiveTime: 0,
+    chromeFocusedTime: 0,
+    chromeUnfocusedTime: 0,
     idleTime: 0,
     sessionCount: 0,
   };
@@ -255,4 +360,13 @@ export async function getStorageInfo(): Promise<{ bytesInUse: number; quota: num
   const bytesInUse = await chrome.storage.local.getBytesInUse(null);
   const quota = chrome.storage.local.QUOTA_BYTES;
   return { bytesInUse, quota };
+}
+
+/**
+ * Clear all tracking data (reset to initial state)
+ */
+export async function clearAllData(): Promise<void> {
+  await chrome.storage.local.clear();
+  await initializeStorage();
+  console.log('All data cleared and reinitialized');
 }

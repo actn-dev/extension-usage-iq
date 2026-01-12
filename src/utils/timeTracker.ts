@@ -1,6 +1,7 @@
 // Time tracking engine with 1-minute alarms for low CPU overhead
 
-import { getSessionState, updateSessionState, updateDomainActivity, addIdleTime, incrementChromeActiveTime } from './storage';
+import { getSessionState, updateSessionState, updateDomainActivity, addIdleTime, incrementChromeFocusedTime, incrementChromeUnfocusedTime } from './storage';
+import { updateSessionStats } from './sessionManager';
 import { extractDomain, shouldTrackUrl } from '../types';
 
 /**
@@ -25,6 +26,7 @@ export async function startTracking(tabId: number, url: string): Promise<void> {
     activeDomain: domain,
     sessionStartTime: now,
     lastUpdateTime: now,
+    lastStateChangeTime: now,
     isIdle: false,
   });
   
@@ -59,12 +61,14 @@ export async function pauseTracking(reason: 'idle' | 'windowBlur'): Promise<void
   await accumulateTime();
   
   const state = await getSessionState();
+  const now = Date.now();
+  
   console.log(`Paused tracking (${reason}): ${state.activeDomain}`);
   
   if (reason === 'idle') {
-    await updateSessionState({ isIdle: true });
+    await updateSessionState({ isIdle: true, lastStateChangeTime: now });
   } else {
-    await updateSessionState({ windowFocused: false });
+    await updateSessionState({ windowFocused: false, lastStateChangeTime: now });
   }
 }
 
@@ -75,9 +79,9 @@ export async function resumeTracking(reason: 'active' | 'windowFocus'): Promise<
   const now = Date.now();
   
   if (reason === 'active') {
-    await updateSessionState({ isIdle: false, lastUpdateTime: now });
+    await updateSessionState({ isIdle: false, lastUpdateTime: now, lastStateChangeTime: now });
   } else {
-    await updateSessionState({ windowFocused: true, lastUpdateTime: now });
+    await updateSessionState({ windowFocused: true, lastUpdateTime: now, lastStateChangeTime: now });
   }
   
   const updatedState = await getSessionState();
@@ -93,11 +97,6 @@ export async function resumeTracking(reason: 'active' | 'windowFocus'): Promise<
 export async function accumulateTime(): Promise<void> {
   const state = await getSessionState();
   
-  // Don't accumulate if idle or window not focused
-  if (state.isIdle || !state.windowFocused) {
-    return;
-  }
-  
   // No previous update time = first tracking, skip accumulation
   if (state.lastUpdateTime === null) {
     return;
@@ -106,7 +105,7 @@ export async function accumulateTime(): Promise<void> {
   const now = Date.now();
   const elapsed = Math.floor((now - state.lastUpdateTime) / 1000); // Convert to seconds
   
-  // Skip if less than 1 second elapsed (shouldn't happen with 1-min alarm)
+  // Skip if less than 1 second elapsed
   if (elapsed < 1) {
     return;
   }
@@ -114,42 +113,49 @@ export async function accumulateTime(): Promise<void> {
   // Cap at 2 minutes to prevent huge gaps if service worker was down
   const cappedElapsed = Math.min(elapsed, 120);
   
-  console.log(`Accumulating ${cappedElapsed}s (elapsed: ${elapsed}s)`);
+  console.log(`Accumulating ${cappedElapsed}s (elapsed: ${elapsed}s, focused: ${state.windowFocused}, idle: ${state.isIdle})`);
   
-  // Track total Chrome active time (wall-clock, once per interval)
-  await incrementChromeActiveTime(cappedElapsed);
-  
-  // Get the active domain
-  const activeDomain = state.activeDomain;
-  
-  // Query all currently open tabs (on-demand, no in-memory tracking)
-  const allTabs = await chrome.tabs.query({});
-  const openDomains = new Set<string>();
-  
-  for (const tab of allTabs) {
-    if (tab.url && shouldTrackUrl(tab.url)) {
-      const domain = extractDomain(tab.url);
-      if (domain) {
-        openDomains.add(domain);
+  // Track Chrome time based on state
+  if (state.isIdle) {
+    // User is idle - track as idle time
+    await addIdleTime(cappedElapsed);
+    await updateSessionStats(0, 0, cappedElapsed);
+  } else if (!state.windowFocused) {
+    // Chrome open but not focused (user in VSCode, etc.)
+    await incrementChromeUnfocusedTime(cappedElapsed);
+    await updateSessionStats(0, cappedElapsed, 0);
+  } else {
+    // Chrome is focused - track as focused time
+    await incrementChromeFocusedTime(cappedElapsed);
+    await updateSessionStats(cappedElapsed, 0, 0);
+    
+    // Only accumulate domain time when Chrome is focused
+    const activeDomain = state.activeDomain;
+    
+    // Query all currently open tabs (on-demand)
+    const allTabs = await chrome.tabs.query({});
+    const openDomains = new Set<string>();
+    const audibleDomains = new Set<string>();
+    
+    for (const tab of allTabs) {
+      if (tab.url && shouldTrackUrl(tab.url)) {
+        const domain = extractDomain(tab.url);
+        if (domain) {
+          openDomains.add(domain);
+          // Check if tab is playing audio/video
+          if (tab.audible) {
+            audibleDomains.add(domain);
+          }
+        }
       }
     }
-  }
-  
-  // Update all domains
-  const updates: Promise<void>[] = [];
-  
-  openDomains.forEach(domain => {
-    if (domain === activeDomain) {
-      // Active tab: update foreground time
-      updates.push(updateDomainActivity(domain, cappedElapsed, true));
-    } else {
-      // Background tab: update background time
-      updates.push(updateDomainActivity(domain, cappedElapsed, false));
+    
+    // Update only foreground time (remove background accumulation)
+    if (activeDomain && openDomains.has(activeDomain)) {
+      const isAudible = audibleDomains.has(activeDomain);
+      await updateDomainActivity(activeDomain, cappedElapsed, true, isAudible);
     }
-  });
-  
-  // Execute all updates in parallel for efficiency
-  await Promise.all(updates);
+  }
   
   // Update lastUpdateTime in storage
   await updateSessionState({ lastUpdateTime: now });

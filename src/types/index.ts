@@ -1,16 +1,40 @@
 // Data models for UsageIQ Chrome Extension
 
 /**
+ * Browser session (Chrome open → close)
+ */
+export interface BrowserSession {
+  sessionId: string; // UUID
+  startTime: number; // Timestamp in ms
+  endTime: number | null; // Timestamp in ms (null if ongoing)
+  focusedTime: number; // Seconds Chrome window was focused
+  unfocusedTime: number; // Seconds Chrome open but other app active
+  idleTime: number; // Seconds user was idle
+  totalTime: number; // focusedTime + unfocusedTime + idleTime
+  tabCount: number; // Peak tab count
+  domainCount: number; // Unique domains visited
+  
+  // Sync management fields
+  syncedAt: number | null; // Timestamp when session was last synced (null = never synced)
+  lastSyncCheckpoint: number | null; // Timestamp of last partial sync for ongoing sessions
+  focusedTimeAtLastSync: number; // Values at last sync checkpoint (for delta calculation)
+  unfocusedTimeAtLastSync: number;
+  idleTimeAtLastSync: number;
+}
+
+/**
  * Represents activity data for a single domain
  */
 export interface DomainActivity {
   domain: string;
-  totalTime: number; // Total time in seconds (foreground + background)
+  totalTime: number; // Total time in seconds (foreground + audible)
   foregroundTime: number; // Time when tab was active/focused (seconds)
   backgroundTime: number; // Time when tab was open but not active (seconds)
+  audibleTime: number; // Time when audio/video was playing (seconds)
   visitCount: number;
   lastVisit: string; // ISO 8601 timestamp
   date: string; // YYYY-MM-DD format
+  sessionId: string; // Link to session
 }
 
 /**
@@ -47,9 +71,11 @@ export interface SessionState {
   activeDomain: string | null;
   sessionStartTime: number | null; // Timestamp in ms
   lastUpdateTime: number | null; // Last time tracking update (ms) - persisted
+  lastStateChangeTime: number | null; // When focus/idle state last changed
   isIdle: boolean;
   windowFocused: boolean;
   currentDayDate: string; // YYYY-MM-DD
+  currentSessionId: string | null; // Current browser session ID
 }
 
 /**
@@ -59,12 +85,23 @@ export interface StorageData {
   // Current session state
   sessionState: SessionState;
   
+  // Current browser session (Chrome open → close)
+  currentSession: BrowserSession | null;
+  
+  // Historical sessions
+  sessions: Record<string, BrowserSession>; // Key: sessionId
+  
+  // Per-session domain activity (NEW)
+  sessionDomains: Record<string, Record<string, DomainActivity>>; // Key: sessionId -> domain -> activity
+  
   // Today's activity (updated in real-time)
   todayActivity: {
     date: string;
-    domains: Record<string, DomainActivity>;
-    totalTime: number; // Wall-clock Chrome active time (not sum of domains)
+    domains: Record<string, DomainActivity>; // DEPRECATED - kept for migration
+    totalTime: number; // Wall-clock Chrome focused time (verifiable)
     chromeActiveTime: number; // Same as totalTime (for clarity)
+    chromeFocusedTime: number; // Time Chrome was focused
+    chromeUnfocusedTime: number; // Time Chrome open but not focused
     idleTime: number;
     sessionCount: number;
   };
@@ -118,11 +155,11 @@ export function shouldTrackUrl(url: string): boolean {
   if (!url) return false;
   
   // Exclude chrome:// and extension pages
-  if (url.startsWith('chrome://') || 
-      url.startsWith('chrome-extension://') ||
-      url.startsWith('about:')) {
-    return false;
-  }
+  // if (url.startsWith('chrome://') || 
+  //     url.startsWith('chrome-extension://') ||
+  //     url.startsWith('about:')) {
+  //   return false;
+  // }
   
   return true;
 }

@@ -2,8 +2,8 @@
  * API Client for communicating with Dodily backend
  */
 
-export const API_BASE_URL = 'http://localhost:3000';
-// export const API_BASE_URL = 'https://dodily-nextjs.vercel.app';
+// export const API_BASE_URL = 'http://localhost:3000';
+export const API_BASE_URL = 'https://dodily-nextjs.vercel.app';
 // For development: const API_BASE_URL = 'http://localhost:3000';
 
 interface SyncResponse {
@@ -20,9 +20,29 @@ interface ActivityRecord {
 	totalTime: number;
 	foregroundTime: number;
 	backgroundTime: number;
+	audibleTime?: number;
 	visitCount: number;
 	lastVisit: string;
+	sessionId?: string;
 	// Device identification
+	deviceId: string;
+	deviceName?: string;
+	browserName?: string;
+	browserVersion?: string;
+	osName?: string;
+	osVersion?: string;
+}
+
+interface SessionRecord {
+	sessionId: string;
+	startTime: number;
+	endTime: number | null;
+	focusedTime: number;
+	unfocusedTime: number;
+	idleTime: number;
+	totalTime: number;
+	tabCount: number;
+	domainCount: number;
 	deviceId: string;
 	deviceName?: string;
 	browserName?: string;
@@ -67,16 +87,25 @@ export class ApiClient {
 	}
 
 	/**
-	 * Sync activity data to server
+	 * Sync activity and session data to server (unified endpoint)
 	 */
-	async syncActivities(activities: ActivityRecord[]): Promise<SyncResponse> {
+	async syncActivities(activities: ActivityRecord[], sessions?: SessionRecord[]): Promise<SyncResponse> {
 		// Using Next.js API route (not tRPC)
 		return this.request<SyncResponse>('/api/extension/sync', {
 			method: 'POST',
 			body: JSON.stringify({
 				activities,
+				sessions: sessions || [],
 			}),
 		});
+	}
+
+	/**
+	 * @deprecated Use syncActivities with sessions parameter instead
+	 * Kept for backward compatibility
+	 */
+	async syncSessions(sessions: SessionRecord[]): Promise<SyncResponse> {
+		return this.syncActivities([], sessions);
 	}
 }
 

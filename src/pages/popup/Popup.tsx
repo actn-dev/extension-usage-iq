@@ -112,7 +112,18 @@ export default function Popup() {
   if (!stats) {
     return (
       <div className="w-96 h-[500px] bg-gradient-to-br from-slate-900 to-slate-800 text-white p-6 flex items-center justify-center">
-        <p className="text-gray-400">No data available</p>
+        <div className="text-center space-y-4">
+          <p className="text-gray-400 mb-4">No data available</p>
+          <button
+            onClick={() => chrome.runtime.openOptionsPage()}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+          >
+            Open Dashboard
+          </button>
+          <p className="text-xs text-gray-500 mt-2">
+            Start browsing to see your activity stats
+          </p>
+        </div>
       </div>
     );
   }

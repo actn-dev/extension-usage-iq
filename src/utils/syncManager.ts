@@ -3,11 +3,12 @@
  * Handles automatic and manual synchronization of activity data
  */
 
-import { getTodayActivity, getDailySummaries } from './storage';
+import { getTodayActivity, getDailySummaries, getAllSessionDomains } from './storage';
+import { getAllSessions } from './sessionManager';
 import { getApiClient } from './apiClient';
 import { getAuthManager } from './authManager';
 import { getDeviceInfo } from './deviceManager';
-// import type { DomainActivity } from '../types';
+import type { BrowserSession } from '../types';
 
 interface SyncResult {
 	success: boolean;
@@ -94,8 +95,9 @@ export class SyncManager {
 
 			// Collect data to sync
 			const activitiesToSync = await this.collectDataForSync();
+			const sessionsToSync = await this.collectSessionsForSync();
 
-			if (activitiesToSync.length === 0) {
+			if (activitiesToSync.length === 0 && sessionsToSync.length === 0) {
 				console.log('No data to sync');
 				return {
 					success: true,
@@ -105,8 +107,13 @@ export class SyncManager {
 			}
 
 			// Send data to server
-			console.log('Syncing', activitiesToSync.length, 'activity records...');
-			const result = await apiClient.syncActivities(activitiesToSync);
+			console.log('Syncing', activitiesToSync.length, 'activity records and', sessionsToSync.length, 'sessions...');
+			
+			// Send everything in ONE request
+			const result = await apiClient.syncActivities(activitiesToSync, sessionsToSync);
+
+			// Mark synced sessions after successful sync
+			await this.markSessionsAsSynced(sessionsToSync);
 
 			// Update last sync time
 			await chrome.storage.local.set({
@@ -142,7 +149,7 @@ export class SyncManager {
 	}
 
 	/**
-	 * Collect data for sync
+	 * Collect data for sync (per-session domains)
 	 */
 	private async collectDataForSync() {
 		const activities: Array<{
@@ -151,6 +158,7 @@ export class SyncManager {
 			totalTime: number;
 			foregroundTime: number;
 			backgroundTime: number;
+			audibleTime: number;
 			visitCount: number;
 			lastVisit: string;
 			deviceId: string;
@@ -159,39 +167,48 @@ export class SyncManager {
 			browserVersion?: string;
 			osName?: string;
 			osVersion?: string;
+			sessionId: string;
 		}> = [];
 
 		// Get device info once
 		const deviceInfo = await getDeviceInfo();
-
-		// Get today's activity
 		const todayActivity = await getTodayActivity();
-		if (todayActivity && todayActivity.domains) {
-			for (const [domain, activity] of Object.entries(todayActivity.domains)) {
-				activities.push({
-					date: todayActivity.date,
-					domain,
-					totalTime: activity.totalTime,
-					foregroundTime: activity.foregroundTime || 0,
-					backgroundTime: activity.backgroundTime || 0,
-					visitCount: activity.visitCount,
-					lastVisit: activity.lastVisit,
-					// Device info
-					deviceId: deviceInfo.deviceId,
-					deviceName: deviceInfo.deviceName,
-					browserName: deviceInfo.browserName,
-					browserVersion: deviceInfo.browserVersion,
-					osName: deviceInfo.osName,
-					osVersion: deviceInfo.osVersion,
-				});
-			}
-		}
 
-		// Get historical summaries (last 7 days)
-		const summaries = await getDailySummaries();
+		// Get per-session domains (last 7 days)
+		const allSessionDomains = await getAllSessionDomains();
 		const sevenDaysAgo = new Date();
 		sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 		const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0]!;
+
+		// Iterate through all sessions and their domains
+		for (const [sessionId, domains] of Object.entries(allSessionDomains)) {
+			for (const [domain, activity] of Object.entries(domains)) {
+				// Only sync recent data (last 7 days)
+				if (activity.date >= sevenDaysAgoStr) {
+					activities.push({
+						date: activity.date,
+						domain,
+						totalTime: activity.totalTime,
+						foregroundTime: activity.foregroundTime || 0,
+						backgroundTime: activity.backgroundTime || 0,
+						audibleTime: activity.audibleTime || 0,
+						visitCount: activity.visitCount,
+						lastVisit: activity.lastVisit,
+						sessionId: activity.sessionId,
+						// Device info
+						deviceId: deviceInfo.deviceId,
+						deviceName: deviceInfo.deviceName,
+						browserName: deviceInfo.browserName,
+						browserVersion: deviceInfo.browserVersion,
+						osName: deviceInfo.osName,
+						osVersion: deviceInfo.osVersion,
+					});
+				}
+			}
+		}
+
+		// Get historical summaries (last 7 days) for any missing data
+		const summaries = await getDailySummaries();
 
 		for (const [date, summary] of Object.entries(summaries)) {
 			// Skip today (already added) and dates older than 7 days
@@ -208,8 +225,10 @@ export class SyncManager {
 						totalTime: domainData.time,
 						foregroundTime: 0, // Historical data might not have this
 						backgroundTime: 0,
+						audibleTime: 0,
 						visitCount: 1, // Estimated
 						lastVisit: new Date(date).toISOString(),
+						sessionId: 'historical',
 						// Device info
 						deviceId: deviceInfo.deviceId,
 						deviceName: deviceInfo.deviceName,
@@ -223,6 +242,101 @@ export class SyncManager {
 		}
 
 		return activities;
+	}
+
+	/**
+	 * Collect sessions for sync
+	 */
+	private async collectSessionsForSync() {
+		const sessions: Array<{
+			sessionId: string;
+			startTime: number;
+			endTime: number | null;
+			focusedTime: number;
+			unfocusedTime: number;
+			idleTime: number;
+			totalTime: number;
+			tabCount: number;
+			domainCount: number;
+			deviceId: string;
+			deviceName?: string;
+		}> = [];
+
+		// Get device info
+		const deviceInfo = await getDeviceInfo();
+
+		// Get all sessions (last 7 days)
+		const allSessions = await getAllSessions();
+		const currentSessionData = await chrome.storage.local.get('currentSession');
+		const currentSession = currentSessionData.currentSession as BrowserSession | null;
+		
+		const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+
+		// Collect ended sessions that haven't been synced yet
+		for (const [sessionId, session] of Object.entries(allSessions)) {
+			// Only sync recent sessions that haven't been synced
+			if (session.startTime >= sevenDaysAgo && !session.syncedAt) {
+				sessions.push({
+					...session,
+					deviceId: deviceInfo.deviceId,
+					deviceName: deviceInfo.deviceName,
+				});
+			}
+		}
+
+		// Handle current ongoing session (partial sync with delta)
+		if (currentSession && currentSession.startTime >= sevenDaysAgo) {
+			// Calculate delta since last sync
+			const deltaFocusedTime = currentSession.focusedTime - currentSession.focusedTimeAtLastSync;
+			const deltaUnfocusedTime = currentSession.unfocusedTime - currentSession.unfocusedTimeAtLastSync;
+			const deltaIdleTime = currentSession.idleTime - currentSession.idleTimeAtLastSync;
+			
+			// Only include if there's new data to sync
+			if (deltaFocusedTime > 0 || deltaUnfocusedTime > 0 || deltaIdleTime > 0) {
+				sessions.push({
+					sessionId: currentSession.sessionId,
+					startTime: currentSession.startTime,
+					endTime: null, // Still ongoing
+					focusedTime: deltaFocusedTime,
+					unfocusedTime: deltaUnfocusedTime,
+					idleTime: deltaIdleTime,
+					totalTime: deltaFocusedTime + deltaUnfocusedTime + deltaIdleTime,
+					tabCount: currentSession.tabCount,
+					domainCount: currentSession.domainCount,
+					deviceId: deviceInfo.deviceId,
+					deviceName: deviceInfo.deviceName,
+				});
+			}
+		}
+
+		return sessions;
+	}
+
+	/**
+	 * Mark sessions as synced after successful sync
+	 */
+	private async markSessionsAsSynced(syncedSessions: Array<{ sessionId: string; endTime: number | null }>) {
+		const allSessions = await getAllSessions();
+		const currentSessionData = await chrome.storage.local.get('currentSession');
+		const currentSession = currentSessionData.currentSession as BrowserSession | null;
+		const now = Date.now();
+		
+		for (const syncedSession of syncedSessions) {
+			if (syncedSession.endTime === null && currentSession?.sessionId === syncedSession.sessionId) {
+				// This is the current ongoing session - update checkpoint
+				currentSession.lastSyncCheckpoint = now;
+				currentSession.focusedTimeAtLastSync = currentSession.focusedTime;
+				currentSession.unfocusedTimeAtLastSync = currentSession.unfocusedTime;
+				currentSession.idleTimeAtLastSync = currentSession.idleTime;
+				await chrome.storage.local.set({ currentSession });
+			} else if (allSessions[syncedSession.sessionId]) {
+				// This is an ended session - mark as fully synced
+				allSessions[syncedSession.sessionId].syncedAt = now;
+			}
+		}
+		
+		// Save updated sessions
+		await chrome.storage.local.set({ sessions: allSessions });
 	}
 
 	/**
