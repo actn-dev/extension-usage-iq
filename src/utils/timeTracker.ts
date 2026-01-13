@@ -15,12 +15,19 @@ export async function startTracking(tabId: number, url: string): Promise<void> {
     return;
   }
   
-  // Accumulate any time from previous tab before switching
-  await accumulateTime();
-  
   const now = Date.now();
   
-  // Update session state with new active tab
+  // Check if current window is focused
+  // Important: chrome.windows.onFocusChanged only fires when switching between apps,
+  // NOT when switching tabs within Chrome, so we must check current state
+  const tab = await chrome.tabs.get(tabId);
+  const window = await chrome.windows.get(tab.windowId);
+  const windowFocused = window.focused;
+  
+  console.log(`[TRACKING] Tab ${tabId} window focus state: ${windowFocused}`);
+  
+  // CRITICAL: Update session state IMMEDIATELY before accumulation
+  // This ensures badge and UI can read the new state right away
   await updateSessionState({
     activeTabId: tabId,
     activeDomain: domain,
@@ -28,9 +35,14 @@ export async function startTracking(tabId: number, url: string): Promise<void> {
     lastUpdateTime: now,
     lastStateChangeTime: now,
     isIdle: false,
+    windowFocused: windowFocused, // Set window focus based on actual state
   });
   
-  console.log(`Started tracking: ${domain} (tab ${tabId})`);
+  console.log(`Started tracking: ${domain} (tab ${tabId}, focused=${windowFocused}) - state updated immediately`);
+  
+  // Accumulate any time from previous tab AFTER setting new state
+  // This prevents blocking the UI with slow tab queries
+  accumulateTime().catch(err => console.error('Error accumulating time:', err));
 }
 
 /**
@@ -93,6 +105,10 @@ export async function resumeTracking(reason: 'active' | 'windowFocus'): Promise<
 /**
  * Accumulate time for the currently active domain and all background domains
  * Called by 1-minute alarm and on tab events
+ * 
+ * @deprecated This function accumulates active domain time via alarm
+ * In hybrid approach, active domain time is tracked via content script heartbeats
+ * Use accumulateUnfocusedIdleTime() instead for alarm-based tracking
  */
 export async function accumulateTime(): Promise<void> {
   const state = await getSessionState();
@@ -129,7 +145,8 @@ export async function accumulateTime(): Promise<void> {
     await incrementChromeFocusedTime(cappedElapsed);
     await updateSessionStats(cappedElapsed, 0, 0);
     
-    // Only accumulate domain time when Chrome is focused
+    // NOTE: Active domain time is now tracked via content script heartbeats
+    // This section is kept for backward compatibility but not actively used
     const activeDomain = state.activeDomain;
     
     // Query all currently open tabs (on-demand)
@@ -156,6 +173,49 @@ export async function accumulateTime(): Promise<void> {
       await updateDomainActivity(activeDomain, cappedElapsed, true, isAudible);
     }
   }
+  
+  // Update lastUpdateTime in storage
+  await updateSessionState({ lastUpdateTime: now });
+}
+
+/**
+ * Accumulate only unfocused and idle time
+ * Active domain time is handled by content script heartbeats
+ * This function is called by the alarm to track time when Chrome is not focused or user is idle
+ */
+export async function accumulateUnfocusedIdleTime(): Promise<void> {
+  const state = await getSessionState();
+  
+  // No previous update time = first tracking, skip accumulation
+  if (state.lastUpdateTime === null) {
+    await updateSessionState({ lastUpdateTime: Date.now() });
+    return;
+  }
+  
+  const now = Date.now();
+  const elapsed = Math.floor((now - state.lastUpdateTime) / 1000); // Convert to seconds
+  
+  // Skip if less than 1 second elapsed
+  if (elapsed < 1) {
+    return;
+  }
+  
+  // Cap at 2 minutes to prevent huge gaps if service worker was down
+  const cappedElapsed = Math.min(elapsed, 120);
+  
+  console.log(`[UnfocusedIdle] Accumulating ${cappedElapsed}s (focused: ${state.windowFocused}, idle: ${state.isIdle})`);
+  
+  // Only track unfocused and idle time (active domain time comes from heartbeats)
+  if (state.isIdle) {
+    // User is idle - track as idle time
+    await addIdleTime(cappedElapsed);
+    await updateSessionStats(0, 0, cappedElapsed);
+  } else if (!state.windowFocused) {
+    // Chrome open but not focused (user in VSCode, etc.)
+    await incrementChromeUnfocusedTime(cappedElapsed);
+    await updateSessionStats(0, cappedElapsed, 0);
+  }
+  // If windowFocused AND not idle: active domain time is tracked by content script heartbeats
   
   // Update lastUpdateTime in storage
   await updateSessionState({ lastUpdateTime: now });

@@ -4,9 +4,10 @@ import type { DailySummary, DomainActivity } from '../types';
 import { getTodayActivity, getDailySummaries, getSessionState, getAllSessionDomains, getSessionDomains } from './storage';
 import { getCurrentSession } from './sessionManager';
 import { extractDomain, shouldTrackUrl, getCurrentDateString } from '../types';
+import { getAllTabs } from './tabTracker';
 
 /**
- * Get all sessions from today
+ * Get all sessions from today with domain breakdown
  */
 export async function getTodaySessions(): Promise<Array<{
   sessionId: string;
@@ -17,11 +18,20 @@ export async function getTodaySessions(): Promise<Array<{
   unfocusedTime: number;
   idleTime: number;
   isActive: boolean;
+  domains: Array<{
+    domain: string;
+    foregroundTime: number;
+    backgroundTime: number;
+    audibleTime: number;
+    totalOpenTime: number;
+    visitCount: number;
+  }>;
 }>> {
   const result = await chrome.storage.local.get(['sessions', 'currentSession']);
   const sessions = result.sessions || {};
   const currentSession = result.currentSession;
   const today = getCurrentDateString();
+  const allSessionDomains = await getAllSessionDomains();
   
   const todaySessions: any[] = [];
   
@@ -29,6 +39,16 @@ export async function getTodaySessions(): Promise<Array<{
   for (const [sessionId, session] of Object.entries(sessions) as [string, any][]) {
     const sessionDate = new Date(session.startTime).toISOString().split('T')[0];
     if (sessionDate === today) {
+      const sessionDomains = allSessionDomains[sessionId] || {};
+      const domains = Object.values(sessionDomains).map(d => ({
+        domain: d.domain,
+        foregroundTime: d.foregroundTime,
+        backgroundTime: d.backgroundTime,
+        audibleTime: d.audibleTime || 0,
+        totalOpenTime: d.totalOpenTime || 0,
+        visitCount: d.visitCount,
+      })).sort((a, b) => b.foregroundTime - a.foregroundTime);
+      
       todaySessions.push({
         sessionId,
         startTime: session.startTime,
@@ -38,6 +58,7 @@ export async function getTodaySessions(): Promise<Array<{
         unfocusedTime: session.unfocusedTime,
         idleTime: session.idleTime,
         isActive: false,
+        domains,
       });
     }
   }
@@ -46,6 +67,16 @@ export async function getTodaySessions(): Promise<Array<{
   if (currentSession) {
     const sessionDate = new Date(currentSession.startTime).toISOString().split('T')[0];
     if (sessionDate === today) {
+      const sessionDomains = allSessionDomains[currentSession.sessionId] || {};
+      const domains = Object.values(sessionDomains).map(d => ({
+        domain: d.domain,
+        foregroundTime: d.foregroundTime,
+        backgroundTime: d.backgroundTime,
+        audibleTime: d.audibleTime || 0,
+        totalOpenTime: d.totalOpenTime || 0,
+        visitCount: d.visitCount,
+      })).sort((a, b) => b.foregroundTime - a.foregroundTime);
+      
       todaySessions.push({
         sessionId: currentSession.sessionId,
         startTime: currentSession.startTime,
@@ -55,6 +86,7 @@ export async function getTodaySessions(): Promise<Array<{
         unfocusedTime: currentSession.unfocusedTime,
         idleTime: currentSession.idleTime,
         isActive: true,
+        domains,
       });
     }
   }
@@ -74,6 +106,8 @@ export async function getCurrentOpenTabs(): Promise<Array<{
   audible: boolean;
   foregroundTime: number;
   totalTime: number;
+  totalOpenTime: number;
+  currentOpenTime: number; // How long this specific tab has been open
   visitCount: number;
 }>> {
   const tabs = await chrome.tabs.query({});
@@ -83,11 +117,21 @@ export async function getCurrentOpenTabs(): Promise<Array<{
   // Get current session domains
   const sessionDomains = currentSession ? await getSessionDomains(currentSession.sessionId) : {};
   
+  // Get tab tracker info for open times
+  const trackedTabs = getAllTabs();
+  const trackedTabMap = new Map(trackedTabs.map(t => [t.tabId, t]));
+  
+  const now = Date.now();
+  
   return tabs
     .filter(tab => tab.url && shouldTrackUrl(tab.url))
     .map(tab => {
       const domain = extractDomain(tab.url!) || 'unknown';
       const domainData = sessionDomains[domain];
+      const trackedTab = trackedTabMap.get(tab.id || 0);
+      
+      // Calculate how long this specific tab has been open
+      const currentOpenTime = trackedTab ? Math.floor((now - trackedTab.openedAt) / 1000) : 0;
       
       return {
         tabId: tab.id || 0,
@@ -98,6 +142,8 @@ export async function getCurrentOpenTabs(): Promise<Array<{
         audible: tab.audible || false,
         foregroundTime: domainData?.foregroundTime || 0,
         totalTime: domainData?.totalTime || 0,
+        totalOpenTime: domainData?.totalOpenTime || 0,
+        currentOpenTime,
         visitCount: domainData?.visitCount || 0,
       };
     })
@@ -129,6 +175,7 @@ export async function getTodayStats(): Promise<{
     foregroundTime: number;
     backgroundTime: number;
     audibleTime: number;
+    totalOpenTime: number;
     percentage: number;
     foregroundPercentage: number;
   }>;
@@ -154,6 +201,7 @@ export async function getTodayStats(): Promise<{
       domain: string;
       foregroundTime: number;
       audibleTime: number;
+      totalOpenTime: number;
       visitCount: number;
     }>;
     openTabs: Array<{
@@ -164,6 +212,8 @@ export async function getTodayStats(): Promise<{
       audible: boolean;
       foregroundTime: number;
       totalTime: number;
+      totalOpenTime: number;
+      currentOpenTime: number;
       visitCount: number;
     }>;
   } | null;
@@ -220,6 +270,7 @@ export async function getTodayStats(): Promise<{
       foregroundTime: d.foregroundTime,
       backgroundTime: d.backgroundTime,
       audibleTime: d.audibleTime || 0,
+      totalOpenTime: d.totalOpenTime || 0,
       percentage: today.totalTime > 0 ? (d.totalTime / today.totalTime) * 100 : 0,
       foregroundPercentage: d.totalTime > 0 ? (d.foregroundTime / d.totalTime) * 100 : 0,
     }));
@@ -270,6 +321,7 @@ export async function getTodayStats(): Promise<{
             domain: d.domain,
             foregroundTime: d.foregroundTime,
             audibleTime: d.audibleTime || 0,
+            totalOpenTime: d.totalOpenTime || 0,
             visitCount: d.visitCount,
           }))
           .sort((a, b) => b.foregroundTime - a.foregroundTime),
@@ -281,6 +333,8 @@ export async function getTodayStats(): Promise<{
           audible: t.audible,
           foregroundTime: t.foregroundTime,
           totalTime: t.totalTime,
+          totalOpenTime: t.totalOpenTime,
+          currentOpenTime: t.currentOpenTime,
           visitCount: t.visitCount,
         })),
       };

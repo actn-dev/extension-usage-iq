@@ -11,6 +11,8 @@ import { WeekTab } from '@src/components/option/weekly';
 import { HistoryTab } from '@src/components/option/history';
 import { SettingsTab } from '@src/components/option/settings';
 import { AccountTab } from '@src/components/option/account';
+import { SessionCard } from '@src/components/option/SessionCard';
+import { SessionsTab } from '@src/components/option/sessions';
 
 interface Tab {
   id: string;
@@ -19,6 +21,7 @@ interface Tab {
 
 const tabs: Tab[] = [
   { id: 'today', label: 'Today' },
+  { id: 'sessions', label: 'Sessions' },
   { id: 'week', label: 'This Week' },
   { id: 'history', label: 'History' },
   { id: 'settings', label: 'Settings' },
@@ -140,6 +143,7 @@ export default function Options() {
       {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-8">
         {activeTab === 'today' && <TodayTab stats={todayStats} />}
+        {activeTab === 'sessions' && <SessionsTab stats={todayStats} />}
         {activeTab === 'week' && <WeekTab stats={weeklyStats} />}
         {activeTab === 'history' && <HistoryTab data={historicalData} />}
         {activeTab === 'settings' && <SettingsTab storageInfo={storageInfo} onExport={exportData} onClear={clearData} />}
@@ -213,6 +217,14 @@ function TodayTab({ stats }: { stats: any }) {
                 <span className="ml-2 text-xs text-gray-400">({stats.currentSession.domains.length})</span>
               )}
             </h4>
+            <div className="flex items-center gap-4 mb-2 text-xs text-gray-400">
+              <span className="flex items-center gap-1">
+                <span className="text-green-300">●</span> Active time
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="text-blue-300">📂</span> Total open time
+              </span>
+            </div>
             {stats.currentSession.domains.length === 0 ? (
               <p className="text-sm text-gray-400">No domains visited yet in this session</p>
             ) : (
@@ -225,7 +237,8 @@ function TodayTab({ stats }: { stats: any }) {
                         {domain.audibleTime > 0 && (
                           <span className="text-pink-300 text-xs">🔊 {formatTime(domain.audibleTime)}</span>
                         )}
-                        <span className="text-green-300 font-medium">{formatTime(domain.foregroundTime)}</span>
+                        <span className="text-green-300 font-medium" title="Active time">{formatTime(domain.foregroundTime)}</span>
+                        <span className="text-blue-300 text-xs" title="Total open time">📂 {formatTime(domain.totalOpenTime)}</span>
                         <span className="text-xs text-gray-400">({domain.visitCount} visits)</span>
                       </div>
                     </div>
@@ -246,6 +259,14 @@ function TodayTab({ stats }: { stats: any }) {
                 Currently Open Tabs
                 <span className="ml-2 text-xs text-gray-400">({stats.currentSession.openTabs.length})</span>
               </h4>
+              <div className="flex items-center gap-4 mb-2 text-xs text-gray-400">
+                <span className="flex items-center gap-1">
+                  <span className="text-green-300">●</span> Active time
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="text-blue-300">⏱️</span> Open for
+                </span>
+              </div>
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {stats.currentSession.openTabs.map((tab: any) => (
                   <div 
@@ -261,8 +282,9 @@ function TodayTab({ stats }: { stats: any }) {
                     </div>
                     <div className="flex items-center gap-3 ml-2">
                       {tab.foregroundTime > 0 && (
-                        <span className="text-xs text-green-300">{formatTime(tab.foregroundTime)}</span>
+                        <span className="text-xs text-green-300" title="Active time">{formatTime(tab.foregroundTime)}</span>
                       )}
+                      <span className="text-xs text-blue-300" title="Open for">{formatTime(tab.currentOpenTime)}</span>
                       <span className="text-xs text-gray-400">{tab.domain}</span>
                       {tab.active && (
                         <span className="text-xs bg-green-500/30 text-green-300 px-2 py-0.5 rounded">Active</span>
@@ -273,49 +295,6 @@ function TodayTab({ stats }: { stats: any }) {
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Previous Sessions Today */}
-      {stats.allSessions && stats.allSessions.length > 1 && (
-        <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-          <h3 className="text-xl font-semibold mb-4">All Sessions Today ({stats.allSessions.length})</h3>
-          <div className="space-y-3">
-            {stats.allSessions.map((session: any) => (
-              <div 
-                key={session.sessionId} 
-                className={`rounded p-4 ${session.isActive ? 'bg-indigo-600/30 border border-indigo-500' : 'bg-slate-700/50'}`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{new Date(session.startTime).toLocaleTimeString()}</span>
-                    {session.isActive && (
-                      <span className="text-xs bg-green-500/30 text-green-300 px-2 py-0.5 rounded">Active</span>
-                    )}
-                  </div>
-                  <span className="text-xs text-gray-400">{session.sessionId.slice(0, 8)}...</span>
-                </div>
-                <div className="grid grid-cols-4 gap-3 text-sm">
-                  <div>
-                    <div className="text-xs text-gray-400">Duration</div>
-                    <div className="font-medium">{formatTime(session.duration)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-400">Focused</div>
-                    <div className="font-medium text-green-400">{formatTime(session.focusedTime)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-400">Unfocused</div>
-                    <div className="font-medium text-yellow-400">{formatTime(session.unfocusedTime)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-400">Idle</div>
-                    <div className="font-medium text-gray-400">{formatTime(session.idleTime)}</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 

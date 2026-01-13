@@ -31,6 +31,7 @@ export interface DomainActivity {
   foregroundTime: number; // Time when tab was active/focused (seconds)
   backgroundTime: number; // Time when tab was open but not active (seconds)
   audibleTime: number; // Time when audio/video was playing (seconds)
+  totalOpenTime: number; // Total time tabs of this domain were open (seconds)
   visitCount: number;
   lastVisit: string; // ISO 8601 timestamp
   date: string; // YYYY-MM-DD format

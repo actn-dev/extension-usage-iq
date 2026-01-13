@@ -1,11 +1,13 @@
 // In-memory tab tracker for efficient foreground/background time tracking
 
 import { extractDomain, shouldTrackUrl } from '../types';
+import { updateDomainOpenTime } from './storage';
 
 interface TabInfo {
   tabId: number;
   domain: string;
   url: string;
+  openedAt: number; // Timestamp when tab was created/opened (ms)
 }
 
 // In-memory map of all currently open tabs
@@ -14,11 +16,19 @@ const openTabs = new Map<number, TabInfo>();
 /**
  * Add or update a tab in the tracker
  */
-export function addTab(tabId: number, url: string): void {
+export function addTab(tabId: number, url: string, openedAt?: number): void {
   const domain = extractDomain(url);
   
   if (domain && shouldTrackUrl(url)) {
-    openTabs.set(tabId, { tabId, domain, url });
+    const existingTab = openTabs.get(tabId);
+    
+    openTabs.set(tabId, { 
+      tabId, 
+      domain, 
+      url,
+      // Preserve existing openedAt if tab already tracked, otherwise use provided or current time
+      openedAt: existingTab?.openedAt || openedAt || Date.now()
+    });
     console.log(`Tab tracked: ${tabId} -> ${domain} (Total: ${openTabs.size})`);
   }
 }
@@ -26,21 +36,38 @@ export function addTab(tabId: number, url: string): void {
 /**
  * Remove a tab from the tracker
  */
-export function removeTab(tabId: number): void {
-  const removed = openTabs.delete(tabId);
-  if (removed) {
-    console.log(`Tab removed: ${tabId} (Remaining: ${openTabs.size})`);
+export async function removeTab(tabId: number): Promise<void> {
+  const tab = openTabs.get(tabId);
+  
+  if (tab) {
+    // Calculate how long the tab was open
+    const openDuration = Math.floor((Date.now() - tab.openedAt) / 1000); // seconds
+    
+    // Store the open time for this domain
+    await updateDomainOpenTime(tab.domain, openDuration);
+    
+    console.log(`Tab closed: ${tabId} (${tab.domain}), was open for ${openDuration}s`);
   }
+  
+  openTabs.delete(tabId);
+  console.log(`Tab removed: ${tabId} (Remaining: ${openTabs.size})`);
 }
 
 /**
  * Update a tab's URL/domain
  */
 export function updateTab(tabId: number, url: string): void {
+  const existingTab = openTabs.get(tabId);
   const domain = extractDomain(url);
   
   if (domain && shouldTrackUrl(url)) {
-    openTabs.set(tabId, { tabId, domain, url });
+    openTabs.set(tabId, { 
+      tabId, 
+      domain, 
+      url,
+      // Preserve openedAt if same domain, otherwise reset
+      openedAt: existingTab?.domain === domain ? existingTab.openedAt : Date.now()
+    });
   } else {
     // URL not trackable, remove from tracking
     openTabs.delete(tabId);
@@ -76,6 +103,27 @@ export function getAllOpenDomains(): string[] {
  */
 export function getTabsForDomain(domain: string): TabInfo[] {
   return Array.from(openTabs.values()).filter(tab => tab.domain === domain);
+}
+
+/**
+ * Finalize all open tabs (calculate and store their open time)
+ * Called when Chrome closes or session ends
+ */
+export async function finalizeAllOpenTabs(): Promise<void> {
+  const now = Date.now();
+  const tabsToFinalize = Array.from(openTabs.values());
+  
+  console.log(`Finalizing ${tabsToFinalize.length} open tabs before session end`);
+  
+  // Process all tabs
+  for (const tab of tabsToFinalize) {
+    const openDuration = Math.floor((now - tab.openedAt) / 1000);
+    await updateDomainOpenTime(tab.domain, openDuration);
+    console.log(`  Finalized ${tab.domain}: ${openDuration}s`);
+  }
+  
+  // Clear the tracker
+  openTabs.clear();
 }
 
 /**

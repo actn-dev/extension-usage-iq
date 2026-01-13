@@ -4,6 +4,7 @@
 
 import type { BrowserSession } from '../types';
 import { getSessionState, updateSessionState, getTodayActivity } from './storage';
+import { finalizeAllOpenTabs } from './tabTracker';
 
 /**
  * Generate a unique session ID
@@ -70,6 +71,10 @@ export async function endBrowserSession(): Promise<void> {
     return;
   }
   
+  // IMPORTANT: Finalize all currently open tabs before ending session
+  // This captures open time for tabs that won't get onRemoved events
+  await finalizeAllOpenTabs();
+  
   // Update session end time and calculate total from components
   const now = Date.now();
   currentSession.endTime = now;
@@ -79,6 +84,12 @@ export async function endBrowserSession(): Promise<void> {
   const today = await getTodayActivity();
   currentSession.tabCount = Object.keys(today.domains).length;
   currentSession.domainCount = Object.keys(today.domains).length;
+  
+  // CRITICAL: Save with endTime set FIRST (in case service worker is killed)
+  // This ensures we can detect ended sessions on resume
+  await chrome.storage.local.set({
+    currentSession: currentSession,  // Save with endTime set
+  });
   
   // Store in sessions history
   const sessions: Record<string, BrowserSession> = result.sessions || {};
@@ -92,9 +103,10 @@ export async function endBrowserSession(): Promise<void> {
     }
   });
   
+  // Save to history and try to clear currentSession
   await chrome.storage.local.set({
     sessions,
-    currentSession: null,
+    currentSession: null,  // Try to clear, but endTime is already set if this fails
   });
   
   await updateSessionState({
@@ -158,7 +170,25 @@ export async function resumeSessionIfExists(): Promise<void> {
   const currentSession = await getCurrentSession();
   const sessionState = await getSessionState();
   
-  if (currentSession && !currentSession.endTime) {
+  // Check if there's a current session
+  if (currentSession) {
+    // If session has endTime, it was already ended (even if still in storage)
+    if (currentSession.endTime) {
+      console.log('Found ended session in storage, moving to history and starting fresh');
+      // Move to history
+      const result = await chrome.storage.local.get('sessions');
+      const sessions: Record<string, BrowserSession> = result.sessions || {};
+      sessions[currentSession.sessionId] = currentSession;
+      await chrome.storage.local.set({ 
+        sessions,
+        currentSession: null 
+      });
+      // Start new session
+      await startBrowserSession();
+      return;
+    }
+    
+    // Session is still active (no endTime)
     const now = Date.now();
     const timeSinceLastUpdate = sessionState.lastUpdateTime 
       ? now - sessionState.lastUpdateTime 
@@ -169,9 +199,9 @@ export async function resumeSessionIfExists(): Promise<void> {
     
     if (timeSinceLastUpdate > BROWSER_CLOSE_THRESHOLD) {
       // Chrome was closed, end old session and start new one
+      console.log('Time gap > 5min, ending old session and starting new');
       await endBrowserSession();
       await startBrowserSession();
-      console.log('Chrome was closed, started new session');
     } else {
       // Service worker just restarted, resume session
       await updateSessionState({

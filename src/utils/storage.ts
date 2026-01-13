@@ -138,6 +138,7 @@ export async function updateDomainActivity(
       foregroundTime: 0,
       backgroundTime: 0,
       audibleTime: 0,
+      totalOpenTime: 0,
       visitCount: 1,
       lastVisit: new Date().toISOString(),
       date: currentDate,
@@ -161,6 +162,51 @@ export async function updateDomainActivity(
   sessionDomains[sessionId]![domain]!.lastVisit = new Date().toISOString();
   
   await chrome.storage.local.set({ sessionDomains });
+}
+
+/**
+ * Update domain's total open time (when a tab is closed)
+ */
+export async function updateDomainOpenTime(
+  domain: string,
+  openDuration: number
+): Promise<void> {
+  const state = await getSessionState();
+  const sessionId = state.currentSessionId || 'unknown';
+  
+  // Get or create sessionDomains storage
+  const result = await chrome.storage.local.get('sessionDomains');
+  const sessionDomains: Record<string, Record<string, DomainActivity>> = result.sessionDomains || {};
+  
+  // Initialize session if not exists
+  if (!sessionDomains[sessionId]) {
+    sessionDomains[sessionId] = {};
+  }
+  
+  // Initialize domain for this session if not exists
+  if (!sessionDomains[sessionId]![domain]) {
+    const currentDate = getCurrentDateString();
+    sessionDomains[sessionId]![domain] = {
+      domain,
+      totalTime: 0,
+      foregroundTime: 0,
+      backgroundTime: 0,
+      audibleTime: 0,
+      totalOpenTime: 0,
+      visitCount: 0,
+      lastVisit: new Date().toISOString(),
+      date: currentDate,
+      sessionId,
+    };
+  }
+  
+  // Add the open duration to total open time
+  sessionDomains[sessionId]![domain]!.totalOpenTime += openDuration;
+  sessionDomains[sessionId]![domain]!.lastVisit = new Date().toISOString();
+  
+  await chrome.storage.local.set({ sessionDomains });
+  
+  console.log(`Updated open time for ${domain}: +${openDuration}s (total: ${sessionDomains[sessionId]![domain]!.totalOpenTime}s)`);
 }
 
 /**
@@ -252,6 +298,7 @@ export async function incrementVisitCount(domain: string): Promise<void> {
       foregroundTime: 0,
       backgroundTime: 0,
       audibleTime: 0,
+      totalOpenTime: 0,
       visitCount: 0,
       lastVisit: new Date().toISOString(),
       date: currentDate,
@@ -279,6 +326,15 @@ export async function addIdleTime(seconds: number): Promise<void> {
 export async function rolloverToNewDay(): Promise<void> {
   const today = await getTodayActivity();
   const summaries = await getDailySummaries();
+  
+  // IMPORTANT: End current session before rolling over to new day
+  // This ensures session is properly saved in history
+  const result = await chrome.storage.local.get('currentSession');
+  if (result.currentSession && !result.currentSession.endTime) {
+    console.log('Day rollover: ending current session before new day');
+    const { endBrowserSession } = await import('./sessionManager');
+    await endBrowserSession();
+  }
   
   // Create daily summary from today's data
   const topDomains = Object.values(today.domains)
@@ -326,6 +382,10 @@ export async function rolloverToNewDay(): Promise<void> {
   });
   
   console.log(`Rolled over to new day: ${getCurrentDateString()}`);
+  
+  // Start a fresh session for the new day
+  const { startBrowserSession } = await import('./sessionManager');
+  await startBrowserSession();
 }
 
 /**

@@ -1,19 +1,25 @@
 // UsageIQ Background Service Worker
 // Monitors browser activity and tracks time spent on websites
 
-import { initializeStorage, getSessionState, updateSessionState, incrementVisitCount, rolloverToNewDay, getTodayActivity } from '../../utils/storage';
-import { startTracking, stopTracking, pauseTracking, resumeTracking, handleIdleStateChange } from '../../utils/timeTracker';
-import { extractDomain, shouldTrackUrl, getCurrentDateString } from '../../types';
-import { initializeTabTracker, addTab, removeTab, updateTab } from '../../utils/tabTracker';
-import { startBrowserSession, endBrowserSession, resumeSessionIfExists } from '../../utils/sessionManager';
-import { initializeBlocking, updateBlockingRules } from '../../utils/blockManager';
-import { getDomainMinutesUsedToday, getBlockConfig } from '../../utils/blockStorage';
-import { getSyncManager } from '../../utils/syncManager';
-import { getAuthManager } from '../../utils/authManager';
+import { extractDomain, getCurrentDateString, shouldTrackUrl } from '../../types';
+import { startBadgeTimer, stopBadgeTimer } from '../../utils/badgeManager';
 import { getBlockConfigSync } from '../../utils/blockConfigSync';
+import { initializeBlocking, updateBlockingRules } from '../../utils/blockManager';
+import { getBlockConfig, getDomainMinutesUsedToday } from '../../utils/blockStorage';
 import { getDeviceInfo, setDeviceName } from '../../utils/deviceManager';
+import { handleContentScriptMessage } from '../../utils/heartbeatTracker';
+import { endBrowserSession, resumeSessionIfExists } from '../../utils/sessionManager';
+import { getSessionState, getTodayActivity, incrementVisitCount, initializeStorage, rolloverToNewDay } from '../../utils/storage';
+import { getSyncManager } from '../../utils/syncManager';
+import { addTab, initializeTabTracker, removeTab, updateTab } from '../../utils/tabTracker';
+import { accumulateUnfocusedIdleTime, handleIdleStateChange, pauseTracking, resumeTracking, startTracking, stopTracking } from '../../utils/timeTracker';
 
 console.log('UsageIQ background service worker loaded');
+
+// Configuration: Time tracking interval
+// Set to 1 for debugging (updates every second)
+// Set to 60 for production (updates every minute, low CPU overhead)
+const TIME_TRACKING_INTERVAL_SECONDS = 60; // Change to 60 for production
 
 // Initialize extension
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -22,8 +28,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Initialize storage
   await initializeStorage();
   
-  // Start or resume browser session
-  await startBrowserSession();
+  // Resume existing session or start new one (handles extension reload)
+  await resumeSessionIfExists();
   
   // Initialize tab tracker with all open tabs
   await initializeTabTracker();
@@ -61,10 +67,21 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     periodInMinutes: 5,
   });
   
-  // Set up 1-minute time tracking alarm (low CPU overhead)
-  chrome.alarms.create('trackTime', {
-    periodInMinutes: 1,
-  });
+  // Set up time tracking alarm (configurable interval)
+  if (TIME_TRACKING_INTERVAL_SECONDS >= 60) {
+    // Use periodInMinutes for intervals >= 60 seconds
+    chrome.alarms.create('trackTime', {
+      periodInMinutes: TIME_TRACKING_INTERVAL_SECONDS / 60,
+    });
+  } else {
+    // Use delayInMinutes with repeating creation for sub-minute intervals
+    chrome.alarms.create('trackTime', {
+      delayInMinutes: TIME_TRACKING_INTERVAL_SECONDS / 60,
+    });
+  }
+  
+  // Start badge timer (updates every second)
+  startBadgeTimer();
   
   console.log('UsageIQ initialized successfully');
 });
@@ -106,11 +123,15 @@ chrome.runtime.onStartup.addListener(async () => {
   if (tabs[0] && tabs[0].id && tabs[0].url) {
     await startTracking(tabs[0].id, tabs[0].url);
   }
+  
+  // Start badge timer
+  startBadgeTimer();
 });
 
 // Tab activated (user switched to different tab)
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  console.log('Tab activated:', activeInfo.tabId);
+  const activationTime = Date.now();
+  console.log(`[TRACKING] Tab activated: ${activeInfo.tabId} at ${activationTime}`);
   
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);
@@ -122,7 +143,10 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
       if (domain && shouldTrackUrl(tab.url)) {
         await incrementVisitCount(domain);
       }
+      console.log(`[TRACKING] Starting tracking for domain: ${domain} at ${Date.now()} (${Date.now() - activationTime}ms after activation)`);
       await startTracking(activeInfo.tabId, tab.url);
+      
+      // Badge timer is already running, will pick up new state immediately
     }
   } catch (error) {
     console.error('Error handling tab activation:', error);
@@ -155,8 +179,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const state = await getSessionState();
   
-  // Remove from tracker
-  removeTab(tabId);
+  // Remove from tracker (this will save open duration)
+  await removeTab(tabId);
   
   if (state.activeTabId === tabId) {
     console.log('Active tab closed:', tabId);
@@ -220,9 +244,15 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     const blockConfigSync = getBlockConfigSync();
     await blockConfigSync.syncBlockAttempts();
   } else if (alarm.name === 'trackTime') {
-    // Accumulate time every minute (low CPU overhead)
-    const { accumulateTime } = await import('../../utils/timeTracker');
-    await accumulateTime();
+    // Only accumulate unfocused/idle time (active time is handled by content script heartbeats)
+    await accumulateUnfocusedIdleTime();
+    
+    // Re-create alarm for sub-minute intervals (Chrome doesn't support periodInMinutes < 1)
+    if (TIME_TRACKING_INTERVAL_SECONDS < 60) {
+      chrome.alarms.create('trackTime', {
+        delayInMinutes: TIME_TRACKING_INTERVAL_SECONDS / 60,
+      });
+    }
   }
 });
 
@@ -241,12 +271,22 @@ function getNextMidnight(): number {
 // Clean shutdown - save state before service worker terminates
 self.addEventListener('beforeunload', async () => {
   console.log('Service worker shutting down, saving state');
+  stopBadgeTimer();
   await stopTracking();
   await endBrowserSession();
 });
 
-// Listen for messages from popup/options
+// Listen for messages from popup/options AND content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle content script heartbeats
+  if (message.type === 'heartbeat' || message.type === 'visibilityChange') {
+    const receiveTime = Date.now();
+    const domain = message.domain || 'unknown';
+    console.log(`[TRACKING-BG] Received ${message.type} from ${domain} at ${receiveTime} (sent at ${message.timestamp}, delay: ${receiveTime - message.timestamp}ms)`);
+    handleContentScriptMessage(message, sender, sendResponse);
+    return true; // Keep channel open for async response
+  }
+  
   if (message.type === 'AUTH_STATE_CHANGED') {
     handleAuthStateChange(message.authenticated).then(() => {
       sendResponse({ success: true });
