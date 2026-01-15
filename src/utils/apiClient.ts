@@ -89,11 +89,20 @@ export class ApiClient {
 	/**
 	 * Sync activity and session data to server (unified endpoint)
 	 */
-	async syncActivities(activities: ActivityRecord[], sessions?: SessionRecord[]): Promise<SyncResponse> {
+	async syncActivities(
+		activities: ActivityRecord[], 
+		sessions?: SessionRecord[], 
+		organizationId?: string
+	): Promise<SyncResponse> {
+		if (!organizationId) {
+			throw new Error('Organization ID is required for syncing data');
+		}
+		
 		// Using Next.js API route (not tRPC)
 		return this.request<SyncResponse>('/api/extension/sync', {
 			method: 'POST',
 			body: JSON.stringify({
+				organizationId,
 				activities,
 				sessions: sessions || [],
 			}),

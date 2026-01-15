@@ -61,7 +61,14 @@ class BlockConfigSync {
                 return null;
             }
 
-            const response = await fetch(`${API_BASE_URL}/api/extension/blocking/config`, {
+            // Get active organization ID
+            const organizationId = await authManager.getActiveOrganizationId();
+            if (!organizationId) {
+                console.log('No active organization, skipping config fetch');
+                return null;
+            }
+
+            const response = await fetch(`${API_BASE_URL}/api/extension/blocking/config?organizationId=${encodeURIComponent(organizationId)}`, {
                 method: 'GET',
                 credentials: 'include',
                 headers: {
@@ -158,6 +165,13 @@ class BlockConfigSync {
                 return;
             }
 
+            // Get active organization ID
+            const organizationId = await authManager.getActiveOrganizationId();
+            if (!organizationId) {
+                console.log('No active organization, cannot sync block attempts');
+                return;
+            }
+
             const attemptsToSync = [...this.pendingAttempts];
             this.pendingAttempts = [];
 
@@ -167,7 +181,10 @@ class BlockConfigSync {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ attempts: attemptsToSync }),
+                body: JSON.stringify({ 
+                    organizationId,
+                    attempts: attemptsToSync 
+                }),
             });
 
             if (!response.ok) {

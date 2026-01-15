@@ -85,9 +85,27 @@ export class SyncManager {
 		try {
 			// Check authentication
 			const authManager = getAuthManager();
-			// const token = await authManager.getAuthToken();
 
-			
+			// Check if user has selected an organization
+			const hasOrg = await authManager.hasActiveOrganization();
+			if (!hasOrg) {
+				return {
+					success: false,
+					syncedCount: 0,
+					failedCount: 0,
+					error: 'No organization selected. Please select an organization in the extension popup.',
+				};
+			}
+
+			const organizationId = await authManager.getActiveOrganizationId();
+			if (!organizationId) {
+				return {
+					success: false,
+					syncedCount: 0,
+					failedCount: 0,
+					error: 'Organization ID not found',
+				};
+			}
 
 			// Get API client and set token
 			const apiClient = getApiClient();
@@ -107,10 +125,10 @@ export class SyncManager {
 			}
 
 			// Send data to server
-			console.log('Syncing', activitiesToSync.length, 'activity records and', sessionsToSync.length, 'sessions...');
+			console.log('Syncing', activitiesToSync.length, 'activity records and', sessionsToSync.length, 'sessions to org:', organizationId);
 			
-			// Send everything in ONE request
-			const result = await apiClient.syncActivities(activitiesToSync, sessionsToSync);
+			// Send everything in ONE request with organizationId
+			const result = await apiClient.syncActivities(activitiesToSync, sessionsToSync, organizationId);
 
 			// Mark synced sessions after successful sync
 			await this.markSessionsAsSynced(sessionsToSync);
