@@ -10,16 +10,36 @@ interface Stats {
   backgroundTime: number;
   activeTime: number;
   idleTime: number;
+  chromeFocusedTime: number;
+  chromeUnfocusedTime: number;
+  audibleTime: number;
   topDomains: Array<{ 
     domain: string; 
     time: number; 
     foregroundTime: number;
     backgroundTime: number;
+    audibleTime: number;
     percentage: number;
     foregroundPercentage: number;
   }>;
   domainCount: number;
   visitCount: number;
+  currentSession?: {
+    sessionId: string;
+    duration: number;
+    focusedTime: number;
+    unfocusedTime: number;
+    idleTime: number;
+    openTabs: Array<{
+      tabId: number;
+      domain: string;
+      title: string;
+      active: boolean;
+      audible: boolean;
+      foregroundTime: number;
+      currentOpenTime: number;
+    }>;
+  } | null;
 }
 
 export default function Popup() {
@@ -29,6 +49,12 @@ export default function Popup() {
   const [blockConfig, setBlockConfig] = useState<BlockConfig | null>(null);
   const [activeOverrides, setActiveOverrides] = useState<ActiveOverride[]>([]);
   const [currentUrl, setCurrentUrl] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<{
+    domain: string;
+    title: string;
+    timeOnCurrent: number;
+    totalTimeToday: number;
+  } | null>(null);
 
   useEffect(() => {
     loadStats();
@@ -39,6 +65,7 @@ export default function Popup() {
     const interval = setInterval(() => {
       loadStats();
       loadBlockInfo();
+      getCurrentTab();
       setCurrentTime(new Date());
     }, 2000);
 
@@ -74,7 +101,22 @@ export default function Popup() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab?.url) {
         const url = new URL(tab.url);
-        setCurrentUrl(url.hostname.replace(/^www\./, ''));
+        const domain = url.hostname.replace(/^www\./, '');
+        setCurrentUrl(domain);
+        
+        // Find active tab info from current session
+        if (stats?.currentSession?.openTabs) {
+          const activeTabInfo = stats.currentSession.openTabs.find((t: any) => t.active);
+          if (activeTabInfo) {
+            const domainStats = stats.topDomains.find((d: any) => d.domain === domain);
+            setActiveTab({
+              domain,
+              title: tab.title || domain,
+              timeOnCurrent: activeTabInfo.currentOpenTime,
+              totalTimeToday: domainStats?.foregroundTime || 0,
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('Error getting current tab:', error);
@@ -171,12 +213,58 @@ export default function Popup() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Active Tab Card */}
+        {activeTab && (
+          <div className="bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg p-3 shadow-lg">
+            <div className="text-xs text-emerald-100 mb-1">Currently Active</div>
+            <div className="text-sm font-semibold text-white truncate mb-2" title={activeTab.title}>
+              {activeTab.title}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <div className="text-emerald-200">On this tab</div>
+                <div className="text-lg font-bold text-white">{formatTime(activeTab.timeOnCurrent)}</div>
+              </div>
+              <div>
+                <div className="text-emerald-200">Today total</div>
+                <div className="text-lg font-bold text-white">{formatTime(activeTab.totalTimeToday)}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Current Session Summary */}
+        {stats?.currentSession && (
+          <div className="bg-slate-800/60 rounded-lg p-3 border border-slate-700">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs text-gray-400">Current Session</div>
+              <div className="text-xs text-gray-500 font-mono">
+                {stats.currentSession.sessionId.slice(0, 8)}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <div className="text-gray-400">Duration</div>
+                <div className="text-sm font-semibold text-white">{formatTime(stats.currentSession.duration)}</div>
+              </div>
+              <div>
+                <div className="text-gray-400">Focused</div>
+                <div className="text-sm font-semibold text-green-400">{formatTime(stats.currentSession.focusedTime)}</div>
+              </div>
+              <div>
+                <div className="text-gray-400">Open Tabs</div>
+                <div className="text-sm font-semibold text-blue-400">{stats.currentSession.openTabs?.length || 0}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Current Site Quick Block */}
         {currentUrl && (
           <div className="bg-slate-800/60 rounded-lg p-3 border border-slate-700">
             <div className="flex items-center justify-between">
               <div className="flex-1 min-w-0">
-                <div className="text-xs text-gray-400 mb-1">Current Site</div>
+                <div className="text-xs text-gray-400 mb-1">Block/Unblock</div>
                 <div className="text-sm font-medium text-white truncate" title={currentUrl}>
                   {currentUrl}
                 </div>
@@ -222,73 +310,56 @@ export default function Popup() {
           </div>
         )}
 
-        {/* Total Time Card */}
-        <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-4 shadow-lg">
-          <div className="text-sm text-blue-200 mb-1">Today's Total Time</div>
-          <div className="text-3xl font-bold">{formatTime(stats.totalTime)}</div>
-          <div className="text-xs text-blue-200 mt-2 space-y-1">
-            <div className="flex justify-between">
-              <span>Foreground:</span>
-              <span className="font-medium">{formatTime(stats.foregroundTime)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Background:</span>
-              <span className="font-medium">{formatTime(stats.backgroundTime)}</span>
-            </div>
+        {/* Key Metrics */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-3 shadow-lg">
+            <div className="text-xs text-blue-200 mb-1">Focused</div>
+            <div className="text-xl font-bold">{formatTime(stats.chromeFocusedTime)}</div>
+            <div className="text-xs text-blue-200 mt-1">Active</div>
           </div>
-        </div>
-
-        {/* Quick Stats */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-slate-800/60 rounded-lg p-3 border border-slate-700">
-            <div className="text-xs text-gray-400 mb-1">Sites Visited</div>
-            <div className="text-2xl font-bold text-purple-400">{stats.domainCount}</div>
-          </div>
-          <div className="bg-slate-800/60 rounded-lg p-3 border border-slate-700">
-            <div className="text-xs text-gray-400 mb-1">Total Visits</div>
-            <div className="text-2xl font-bold text-green-400">{stats.visitCount}</div>
+          
+          {stats.audibleTime > 0 && (
+            <div className="bg-gradient-to-br from-pink-600 to-pink-700 rounded-lg p-3 shadow-lg">
+              <div className="text-xs text-pink-200 mb-1">🔊 Audio</div>
+              <div className="text-xl font-bold">{formatTime(stats.audibleTime)}</div>
+              <div className="text-xs text-pink-200 mt-1">Playing</div>
+            </div>
+          )}
+          
+          <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-3 shadow-lg">
+            <div className="text-xs text-purple-200 mb-1">Sites</div>
+            <div className="text-xl font-bold">{stats.domainCount}</div>
+            <div className="text-xs text-purple-200 mt-1">{stats.visitCount} visits</div>
           </div>
         </div>
 
         {/* Top Domains */}
         <div className="bg-slate-800/60 rounded-lg p-4 border border-slate-700">
-          <h2 className="text-sm font-semibold text-gray-300 mb-3">Top Websites</h2>
+          <h2 className="text-sm font-semibold text-gray-300 mb-3">Top 5 Websites Today</h2>
           {stats.topDomains.length === 0 ? (
             <p className="text-xs text-gray-500 text-center py-4">No browsing activity yet</p>
           ) : (
-            <div className="space-y-2">
-              {stats.topDomains.slice(0, 8).map((domain, index) => (
-                <div key={domain.domain} className="group">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <span className="text-xs font-medium text-gray-500 w-4">{index + 1}</span>
-                      <span className="text-sm text-white truncate flex-1" title={domain.domain}>
+            <div className="space-y-2.5">
+              {stats.topDomains.slice(0, 5).map((domain, index) => (
+                <div key={domain.domain} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span className="text-xs font-medium text-gray-500 w-4">{index + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-white truncate" title={domain.domain}>
                         {domain.domain}
-                      </span>
-                    </div>
-                    <div className="flex flex-col items-end ml-2">
-                      <span className="text-xs font-medium text-blue-400">
-                        {formatTime(domain.time)}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {formatTime(domain.foregroundTime)}f / {formatTime(domain.backgroundTime)}b
-                      </span>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {formatTime(domain.foregroundTime)} active
+                        {domain.audibleTime > 0 && ` • 🔊 ${formatTime(domain.audibleTime)}`}
+                      </div>
                     </div>
                   </div>
-                  <div className="ml-6">
-                    <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                      <div className="h-full flex">
-                        <div
-                          className="bg-blue-500 rounded-l-full transition-all duration-300"
-                          style={{ width: `${(domain.foregroundTime / domain.time) * domain.percentage}%` }}
-                          title={`Foreground: ${domain.foregroundPercentage.toFixed(1)}%`}
-                        />
-                        <div
-                          className="bg-purple-500 rounded-r-full transition-all duration-300"
-                          style={{ width: `${(domain.backgroundTime / domain.time) * domain.percentage}%` }}
-                          title={`Background: ${(100 - domain.foregroundPercentage).toFixed(1)}%`}
-                        />
-                      </div>
+                  <div className="text-right ml-2">
+                    <div className="text-sm font-medium text-blue-400">
+                      {formatTime(domain.time)}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {((domain.foregroundTime / (stats.chromeFocusedTime || 1)) * 100).toFixed(0)}%
                     </div>
                   </div>
                 </div>
