@@ -79,17 +79,29 @@ export function Login() {
             <div className="p-4">
                 {showOrgSelector ? (
                     <div>
-                        <div className="mb-4">
-                            <p className="text-sm text-gray-600 mb-2">
+                        <div className="mb-4 flex items-center justify-between">
+                            <p className="text-sm text-gray-600">
                                 Welcome, {session.data.user.email}!
                             </p>
+                            <button
+                                onClick={handleLogout}
+                                className="text-sm text-gray-600 hover:text-gray-800 underline"
+                            >
+                                Logout
+                            </button>
                         </div>
                         <OrganizationSelector onOrganizationSelected={handleOrganizationSelected} />
                     </div>
                 ) : (
                     <div>
-                        <div className="mb-4">
+                        <div className="mb-4 flex items-center justify-between">
                             <p className="text-sm font-medium">Welcome, {session.data.user.email}!</p>
+                            <button
+                                onClick={handleLogout}
+                                className="text-sm text-gray-600 hover:text-gray-800 underline"
+                            >
+                                Logout
+                            </button>
                             {hasActiveOrg && (
                                 <p className="text-xs text-green-600 mt-1">
                                     ✓ Organization active - tracking enabled
