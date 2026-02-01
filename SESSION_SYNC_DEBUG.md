@@ -67,14 +67,14 @@ console.log('Extension initialized:', !!chrome.runtime.id);
 ```bash
 # In Chrome
 1. Go to chrome://extensions/
-2. Find UsageIQ extension
+2. Find Dilly extension
 3. Click reload icon
 ```
 
 ### Step 2: Open DevTools for Extension
 ```bash
 # In Chrome extensions page
-1. Click "Details" on UsageIQ
+1. Click "Details" on Dilly
 2. Scroll to "Inspect views"
 3. Click "service worker" or "background page"
 ```

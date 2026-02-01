@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "UsageIQ - Browser Activity Monitor",
+  "name": "Dilly - Browser Activity Monitor",
   "version": "1.0.0",
   "description": "Track and analyze your browsing activity with detailed time tracking and productivity insights",
   "options_ui": {
@@ -12,7 +12,7 @@
     "default_icon": {
       "32": "icon-32.png"
     },
-    "default_title": "UsageIQ - View Activity"
+    "default_title": "Dilly - View Activity"
   },
   "background": {
     "service_worker": "src/pages/background/index.ts",
@@ -37,8 +37,12 @@
   ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content-script/tracker.ts"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content-script/tracker.ts"
+      ],
       "run_at": "document_start"
     }
   ],

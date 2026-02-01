@@ -296,7 +296,7 @@ export function SettingsTab({ storageInfo, onExport, onClear }: { storageInfo: a
 
       {/* About */}
       <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">About UsageIQ</h2>
+        <h2 className="text-xl font-semibold mb-4">About Dilly</h2>
         <p className="text-gray-400 mb-2">Version: 1.0.0</p>
         <p className="text-gray-400 text-sm">
           UsageIQ monitors your browser activity to help you understand your browsing patterns and improve productivity.

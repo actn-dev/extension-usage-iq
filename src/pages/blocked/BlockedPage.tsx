@@ -112,7 +112,7 @@ export default function BlockedPage() {
             <>
               <h2 className="text-xl font-semibold mb-2">This site is blocked</h2>
               <p className="text-gray-400">
-                You've configured UsageIQ to block this website to help you stay focused.
+                You've configured Dilly to block this website to help you stay focused.
               </p>
             </>
           )}

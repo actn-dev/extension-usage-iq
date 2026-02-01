@@ -1,4 +1,4 @@
-// Data models for UsageIQ Chrome Extension
+// Data models for Dilly Chrome Extension
 
 /**
  * Browser session (Chrome open → close)

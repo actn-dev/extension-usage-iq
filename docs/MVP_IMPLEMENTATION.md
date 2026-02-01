@@ -1,4 +1,4 @@
-# UsageIQ - Browser Activity Monitor
+# Dilly - Browser Activity Monitor
 
 A Chrome extension that tracks and analyzes browsing activity with detailed time tracking and productivity insights.
 

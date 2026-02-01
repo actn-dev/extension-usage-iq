@@ -1,4 +1,4 @@
-// UsageIQ Background Service Worker
+// Dilly Background Service Worker
 // Monitors browser activity and tracks time spent on websites
 
 import { extractDomain, getCurrentDateString, shouldTrackUrl } from '../../types';
@@ -14,7 +14,7 @@ import { getSyncManager } from '../../utils/syncManager';
 import { addTab, initializeTabTracker, removeTab, updateTab } from '../../utils/tabTracker';
 import { accumulateUnfocusedIdleTime, handleIdleStateChange, pauseTracking, resumeTracking, startTracking, stopTracking } from '../../utils/timeTracker';
 
-console.log('UsageIQ background service worker loaded');
+console.log('Dilly background service worker loaded');
 
 // Configuration: Time tracking interval
 // Set to 1 for debugging (updates every second)
@@ -83,7 +83,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Start badge timer (updates every second)
   startBadgeTimer();
   
-  console.log('UsageIQ initialized successfully');
+  console.log('Dilly initialized successfully');
 });
 
 // Handle window close - end session if last window is closed
@@ -102,7 +102,7 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 
 // Handle extension startup (browser restart)
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('Browser started, resuming UsageIQ monitoring');
+  console.log('Browser started, resuming Dilly monitoring');
   await initializeStorage();
   
   // Resume or start new browser session

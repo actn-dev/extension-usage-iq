@@ -176,7 +176,7 @@ export default function Popup() {
       <div className="bg-slate-800/50 backdrop-blur-sm p-4 border-b border-slate-700">
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
-            UsageIQ
+            Dilly
           </h1>
           {blockConfig && (
             <div className="flex items-center gap-2">
