@@ -393,3 +393,5 @@ public/manifest.json
 
 
 dist_chrome*.zip
+
+*.pem

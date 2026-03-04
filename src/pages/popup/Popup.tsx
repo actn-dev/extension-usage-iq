@@ -3,7 +3,7 @@ import type { ActiveOverride, BlockConfig } from '../../types';
 import { formatTime, getTodayStats } from '../../utils/analytics';
 import { updateBlockingRules } from '../../utils/blockManager';
 import { addBlockedDomain, getActiveOverrides, getBlockConfig, removeBlockedDomain } from '../../utils/blockStorage';
-import { authClient } from '@src/lib/auth/auth-client';
+import { hasOrgKey } from '@src/utils/managedConfig';
 
 interface Stats {
   totalTime: number;
@@ -44,7 +44,7 @@ interface Stats {
 }
 
 export default function Popup() {
-  const session = authClient.useSession();
+  const [isOrgConfigured, setIsOrgConfigured] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -59,6 +59,7 @@ export default function Popup() {
   } | null>(null);
 
   useEffect(() => {
+    hasOrgKey().then(setIsOrgConfigured);
     loadStats();
     loadBlockInfo();
     getCurrentTab();
@@ -150,7 +151,7 @@ export default function Popup() {
 
   if (loading) {
     return (
-      <div className="w-96 h-[500px] bg-gradient-to-br from-slate-900 to-slate-800 text-white p-6 flex items-center justify-center">
+      <div className="w-96 h-[500px] bg-linear-to-br from-slate-900 to-slate-800 text-white p-6 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
           <p className="text-gray-400">Loading stats...</p>
@@ -161,7 +162,7 @@ export default function Popup() {
 
   if (!stats) {
     return (
-      <div className="w-96 h-[500px] bg-gradient-to-br from-slate-900 to-slate-800 text-white p-6 flex items-center justify-center">
+      <div className="w-96 h-[500px] bg-linear-to-br from-slate-900 to-slate-800 text-white p-6 flex items-center justify-center">
         <div className="text-center space-y-4">
           <p className="text-gray-400 mb-4">No data available</p>
           <button
@@ -179,31 +180,29 @@ export default function Popup() {
   }
 
   return (
-    <div className="w-96 h-[500px] bg-gradient-to-br from-slate-900 to-slate-800 text-white overflow-hidden flex flex-col">
+    <div className="w-96 h-[500px] bg-linear-to-br from-slate-900 to-slate-800 text-white overflow-hidden flex flex-col">
       {/* Header */}
       <div className="bg-slate-800/50 backdrop-blur-sm p-4 border-b border-slate-700">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+          <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-linear-to-r from-blue-400 to-purple-500">
             Dilly
           </h1>
           <div className="flex items-center gap-2">
-            {/* Auth Status */}
+            {/* Org Status */}
             <button
               onClick={openAccountPage}
-              className={`flex items-center gap-1.5 text-xs rounded px-2 py-1 transition-colors ${session.data
+              className={`flex items-center gap-1.5 text-xs rounded px-2 py-1 transition-colors ${isOrgConfigured
                 ? 'bg-green-600/20 border border-green-600/50 hover:bg-green-600/30'
                 : 'bg-slate-700/50 border border-slate-600 hover:bg-slate-700'
                 }`}
             >
-              {session.data ? (
+              {isOrgConfigured ? (
                 <>
                   <span className="text-green-400">●</span>
-                  <span className="text-green-300 max-w-[80px] truncate">
-                    {session.data.user.email?.split('@')[0] || 'Account'}
-                  </span>
+                  <span className="text-green-300">Syncing</span>
                 </>
               ) : (
-                <span className="text-gray-400">Login</span>
+                <span className="text-gray-400">Not configured</span>
               )}
             </button>
 
@@ -246,7 +245,7 @@ export default function Popup() {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Active Tab Card */}
         {activeTab && (
-          <div className="bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg p-3 shadow-lg">
+          <div className="bg-linear-to-r from-emerald-600 to-teal-600 rounded-lg p-3 shadow-lg">
             <div className="text-xs text-emerald-100 mb-1">Currently Active</div>
             <div className="text-sm font-semibold text-white truncate mb-2" title={activeTab.title}>
               {activeTab.title}
@@ -344,21 +343,21 @@ export default function Popup() {
 
         {/* Key Metrics */}
         <div className="grid grid-cols-3 gap-2">
-          <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-3 shadow-lg">
+          <div className="bg-linear-to-br from-blue-600 to-blue-700 rounded-lg p-3 shadow-lg">
             <div className="text-xs text-blue-200 mb-1">Focused</div>
             <div className="text-xl font-bold">{formatTime(stats.chromeFocusedTime)}</div>
             <div className="text-xs text-blue-200 mt-1">Active</div>
           </div>
 
           {stats.chromeUnfocusedTime > 0 && (
-            <div className="bg-gradient-to-br from-teal-700 to-cyan-700 rounded-lg p-3 shadow-lg">
+            <div className="bg-linear-to-br from-teal-700 to-cyan-700 rounded-lg p-3 shadow-lg">
               <div className="text-xs text-cyan-200 mb-1">Unfocused</div>
               <div className="text-xl font-bold">{formatTime(stats.chromeUnfocusedTime)}</div>
               <div className="text-xs text-cyan-200 mt-1">Inactive</div>
             </div>
           )}
 
-          <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-3 shadow-lg">
+          <div className="bg-linear-to-br from-purple-600 to-purple-700 rounded-lg p-3 shadow-lg">
             <div className="text-xs text-purple-200 mb-1">Sites</div>
             <div className="text-xl font-bold">{stats.domainCount}</div>
             <div className="text-xs text-purple-200 mt-1">{stats.visitCount} visits</div>

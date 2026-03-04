@@ -47,6 +47,9 @@
     }
   ],
   "devtools_page": "src/pages/devtools/index.html",
+  "storage": {
+    "managed_schema": "schema.json"
+  },
   "web_accessible_resources": [
     {
       "resources": [

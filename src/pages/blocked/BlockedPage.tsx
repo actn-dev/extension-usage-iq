@@ -83,7 +83,7 @@ export default function BlockedPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white flex items-center justify-center">
+      <div className="min-h-screen bg-linear-to-br from-slate-900 to-slate-800 text-white flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-red-500 mx-auto mb-4"></div>
           <p className="text-gray-400">Loading...</p>
@@ -93,7 +93,7 @@ export default function BlockedPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white flex items-center justify-center p-6">
+    <div className="min-h-screen bg-linear-to-br from-slate-900 to-slate-800 text-white flex items-center justify-center p-6">
       <div className="max-w-2xl w-full">
         {/* Icon */}
         <div className="text-center mb-8">

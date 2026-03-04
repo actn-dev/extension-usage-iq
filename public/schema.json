@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "organizationKey": {
+      "type": "string",
+      "description": "Organization API key set by admin via Google Admin Console. Used to authenticate sync requests without requiring individual user login."
+    }
+  }
+}

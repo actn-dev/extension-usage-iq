@@ -60,7 +60,7 @@ export function SettingsTab({ storageInfo, onExport, onClear }: { storageInfo: a
   return (
     <div className="space-y-6">
       {/* Blocking Status - READ-ONLY */}
-      <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg p-6">
+      <div className="bg-linear-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg p-6">
         <div className="text-center">
           <div className="mb-4">
             <span className="text-6xl">🛡️</span>
@@ -189,9 +189,9 @@ export function SettingsTab({ storageInfo, onExport, onClear }: { storageInfo: a
                         <div className="w-full bg-slate-600 rounded-full h-2">
                           <div
                             className={`h-2 rounded-full transition-all ${
-                              usagePercentage >= 100 ? 'bg-gradient-to-r from-red-500 to-red-600' :
-                              usagePercentage >= 80 ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
-                              'bg-gradient-to-r from-blue-500 to-purple-500'
+                              usagePercentage >= 100 ? 'bg-linear-to-r from-red-500 to-red-600' :
+                              usagePercentage >= 80 ? 'bg-linear-to-r from-yellow-500 to-orange-500' :
+                              'bg-linear-to-r from-blue-500 to-purple-500'
                             }`}
                             style={{ width: `${Math.min(usagePercentage, 100)}%` }}
                           />
@@ -265,7 +265,7 @@ export function SettingsTab({ storageInfo, onExport, onClear }: { storageInfo: a
           </p>
           <div className="w-full bg-slate-600 rounded-full h-2">
             <div
-              className="h-2 rounded-full bg-gradient-to-r from-blue-500 to-purple-500"
+              className="h-2 rounded-full bg-linear-to-r from-blue-500 to-purple-500"
               style={{ width: `${(storageInfo.bytesInUse / storageInfo.quota) * 100}%` }}
             />
           </div>

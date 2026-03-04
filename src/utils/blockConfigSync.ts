@@ -1,7 +1,7 @@
 // Extension Config Sync Manager
 // Fetches blocking configuration from server and manages local cache
 
-import { getAuthManager } from './authManager';
+import { getOrgKey } from './managedConfig';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
@@ -53,24 +53,14 @@ class BlockConfigSync {
      */
     async fetchConfig(): Promise<ServerBlockConfig | null> {
         try {
-            const authManager = getAuthManager();
-            const session = await authManager.getSession();
-
-            if (!session) {
-                console.log('No session, skipping config fetch');
-                return null;
-            }
-
-            // Get active organization ID
-            const organizationId = await authManager.getActiveOrganizationId();
+            const organizationId = await getOrgKey();
             if (!organizationId) {
-                console.log('No active organization, skipping config fetch');
+                console.log('No org key configured, skipping config fetch');
                 return null;
             }
 
             const response = await fetch(`${API_BASE_URL}/api/extension/blocking/config?organizationId=${encodeURIComponent(organizationId)}`, {
                 method: 'GET',
-                credentials: 'include',
                 headers: {
                     'Content-Type': 'application/json',
                 },
@@ -157,18 +147,9 @@ class BlockConfigSync {
         try {
             this.isSyncing = true;
 
-            const authManager = getAuthManager();
-            const session = await authManager.getSession();
-
-            if (!session) {
-                console.log('No session, cannot sync block attempts');
-                return;
-            }
-
-            // Get active organization ID
-            const organizationId = await authManager.getActiveOrganizationId();
+            const organizationId = await getOrgKey();
             if (!organizationId) {
-                console.log('No active organization, cannot sync block attempts');
+                console.log('No org key configured, cannot sync block attempts');
                 return;
             }
 
@@ -177,7 +158,6 @@ class BlockConfigSync {
 
             const response = await fetch(`${API_BASE_URL}/api/extension/blocking/attempts`, {
                 method: 'POST',
-                credentials: 'include',
                 headers: {
                     'Content-Type': 'application/json',
                 },

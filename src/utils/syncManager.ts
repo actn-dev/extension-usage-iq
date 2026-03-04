@@ -6,7 +6,7 @@
 import { getTodayActivity, getDailySummaries, getAllSessionDomains } from './storage';
 import { getAllSessions } from './sessionManager';
 import { getApiClient } from './apiClient';
-import { getAuthManager } from './authManager';
+import { getOrgKey, hasOrgKey } from './managedConfig';
 import { getDeviceInfo } from './deviceManager';
 import type { BrowserSession } from '../types';
 
@@ -35,12 +35,13 @@ export class SyncManager {
 	 * Initialize sync manager
 	 */
 	async initialize(): Promise<void> {
-		// Check if user is authenticated
-		const authManager = getAuthManager();
-		const isAuthenticated = await authManager.isAuthenticated();
+		// Check if admin has configured an org key
+		const configured = await hasOrgKey();
 
-		if (isAuthenticated) {
+		if (configured) {
 			await this.startAutoSync();
+		} else {
+			console.log('No org key configured — auto-sync disabled');
 		}
 	}
 
@@ -83,31 +84,18 @@ export class SyncManager {
 		this.syncing = true;
 
 		try {
-			// Check authentication
-			const authManager = getAuthManager();
-
-			// Check if user has selected an organization
-			const hasOrg = await authManager.hasActiveOrganization();
-			if (!hasOrg) {
-				return {
-					success: false,
-					syncedCount: 0,
-					failedCount: 0,
-					error: 'No organization selected. Please select an organization in the extension popup.',
-				};
-			}
-
-			const organizationId = await authManager.getActiveOrganizationId();
+			// Get org key set by admin via managed policy
+			const organizationId = await getOrgKey();
 			if (!organizationId) {
 				return {
 					success: false,
 					syncedCount: 0,
 					failedCount: 0,
-					error: 'Organization ID not found',
+					error: 'Organization key not configured. Please contact your admin.',
 				};
 			}
 
-			// Get API client and set token
+			// Get API client
 			const apiClient = getApiClient();
 			
 

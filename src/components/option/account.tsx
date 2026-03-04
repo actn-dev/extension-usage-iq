@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Login } from "../login";
+import { hasOrgKey } from "@src/utils/managedConfig";
 import { SyncStatus } from "./sync-status";
 
 interface DeviceInfo {
@@ -13,6 +13,7 @@ interface DeviceInfo {
 
 // Account Tab Component
 export function AccountTab() {
+  const [isOrgConfigured, setIsOrgConfigured] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{
     lastSync: number | null;
     syncing: boolean;
@@ -30,6 +31,7 @@ export function AccountTab() {
   const [newDeviceName, setNewDeviceName] = useState('');
 
   useEffect(() => {
+    hasOrgKey().then(setIsOrgConfigured);
     loadSyncStatus();
     loadDeviceInfo();
     const interval = setInterval(loadSyncStatus, 10000); // Update every 10 seconds
@@ -65,7 +67,7 @@ export function AccountTab() {
     setSyncStatus(prev => ({ ...prev, syncing: true, error: null }));
     try {
       const result = await chrome.runtime.sendMessage({ type: 'MANUAL_SYNC' });
-      
+
       if (result.success) {
         setSyncStatus({
           lastSync: Date.now(),
@@ -80,7 +82,7 @@ export function AccountTab() {
           error: result.error || 'Sync failed',
         }));
       }
-      
+
       // Reload status
       await loadSyncStatus();
     } catch (error) {
@@ -109,11 +111,11 @@ export function AccountTab() {
 
   const handleSaveDeviceName = async () => {
     if (!newDeviceName.trim()) return;
-    
+
     try {
-      await chrome.runtime.sendMessage({ 
-        type: 'SET_DEVICE_NAME', 
-        deviceName: newDeviceName.trim() 
+      await chrome.runtime.sendMessage({
+        type: 'SET_DEVICE_NAME',
+        deviceName: newDeviceName.trim()
       });
       await loadDeviceInfo();
       setEditingDeviceName(false);
@@ -131,11 +133,22 @@ export function AccountTab() {
     <div className="space-y-6">
       {/* Account Section */}
       <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-xl font-semibold mb-4">Account & Authentication</h2>
-        <p className="text-gray-400 mb-6">
-          Sign in with your Google account to sync your browsing activity across devices and access the web dashboard.
-        </p>
-        <Login />
+        <h2 className="text-xl font-semibold mb-4">Organization Status</h2>
+        {isOrgConfigured ? (
+          <div className="flex items-center gap-2 text-green-400">
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+            <span className="text-sm">Organization configured by admin. Tracking is active.</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-yellow-400">
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            <span className="text-sm">Not configured. Contact your admin to set up this extension via Google Admin Console.</span>
+          </div>
+        )}
       </div>
 
       {/* Device Information Section */}
@@ -145,7 +158,7 @@ export function AccountTab() {
           <p className="text-gray-400 mb-4 text-sm">
             This device is identified separately in your activity reports, allowing you to track usage across multiple devices.
           </p>
-          
+
           <div className="space-y-3">
             <div className="flex justify-between items-center p-3 bg-slate-700/30 rounded-lg">
               <span className="text-gray-400">Device Name</span>
@@ -215,7 +228,7 @@ export function AccountTab() {
       {/* Sync Settings */}
       <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-6">
         <h2 className="text-xl font-semibold mb-4">Sync Settings</h2>
-        
+
         <div className="space-y-4">
           <div className="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
             <div>
@@ -244,7 +257,7 @@ export function AccountTab() {
       </div>
 
       {/* Dashboard Link */}
-      <div className="bg-gradient-to-br from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg p-6">
+      <div className="bg-linear-to-br from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-2">Web Dashboard</h2>
         <p className="text-gray-300 mb-4">
           View detailed analytics and reports on the web dashboard

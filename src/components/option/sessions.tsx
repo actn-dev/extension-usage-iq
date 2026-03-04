@@ -53,7 +53,7 @@ export function SessionsTab({ stats }: SessionsTabProps) {
           </div>
           <button
             onClick={handleNewSession}
-            className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-medium transition-all shadow-lg hover:shadow-xl"
+            className="px-4 py-2 bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-medium transition-all shadow-lg hover:shadow-xl"
           >
             🔄 Start New Session
           </button>
